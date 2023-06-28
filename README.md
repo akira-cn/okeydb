@@ -5,7 +5,7 @@ WIP
 Airdb-lite is a local file database that is compatible with the [aircode](https://aircode.io/) API.
 
 ```js
-import AirDB from '../index.js';
+import AirDB from 'airdb-lite';
 
 const db = new AirDB();
 const personTable = db.table('person');
