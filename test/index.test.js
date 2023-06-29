@@ -1,7 +1,9 @@
+import {existsSync, readFileSync} from 'node:fs';
 import AirDB from '../index.js';
 
+const db = new AirDB();
+
 test('base set find delete', async () => {
-  const db = new AirDB();
   const personTable = db.table('person');
   let res = await personTable.save({name: 'akira', score: 100});
   expect(Array.isArray(res)).toBeTruthy();
@@ -19,4 +21,26 @@ test('base set find delete', async () => {
   res = await personTable.delete(res);
 
   expect(res.deletedCount).toBe(1);
+});
+
+test('create table', async () => {
+  const myTable = db.table('mytable');
+
+  expect(existsSync(myTable.filepath)).toBeTruthy();
+});
+
+test('clear table', async () => {
+
+});
+
+test('regexp match', async () => {
+  const personTable = db.table('person');
+  await personTable.save({name: 'akira', score: 100});
+  await personTable.save({name: 'aka', score: 90});
+  await personTable.save({name: 'bob', score: 80});
+
+  let res = await personTable.where({name: /^a/}).find();
+  expect(res.length).toBe(2);
+
+  await personTable.where().delete();
 });
