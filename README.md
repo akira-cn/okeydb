@@ -7,7 +7,7 @@ Airdb-lite is a light waight document oriented database based on local file stor
 ## Features
 
 - Use JSON file storage, no need to install any database.
-- A convenient and easy-to-use chained API that supports Promises.
+- A convenient and easy-to-use chained API that returns Promises.
 - Powerful combined conditional queries.
 
 ## Usage
