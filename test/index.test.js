@@ -45,15 +45,15 @@ test('regexp match', async () => {
   await personTable.where().delete();
 });
 
-test('benchmark', async () => {
-  // function randomScore() {
-  //   return Math.floor(100 * Math.random());
-  // }
+// test('benchmark', async () => {
+//   function randomScore() {
+//     return Math.floor(100 * Math.random());
+//   }
 
-  // const bigTable = db.table('bigtable');
-  // for(let i = 0; i < 100000; i++) {
-  //   await bigTable.save({name: `student${i}`, score: randomScore()});
-  // }
+//   const bigTable = db.table('bigtable');
+//   for(let i = 0; i < 100000; i++) {
+//     await bigTable.save({name: `student${i}`, score: randomScore()});
+//   }
 
-  // await bigTable.where().delete();
-});
+//   await bigTable.where().delete();
+// });

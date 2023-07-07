@@ -15,13 +15,12 @@ function randomScore() {
 
 const bigTable = db.table('bigtable');
 
-// const students = [];
-// for(let i = 800000; i < 1000000; i++) {
-//   students.push({name: `student${i}`, score: randomScore()});
-// }
+const students = [];
+for(let i = 0; i < 1000; i++) {
+  students.push({name: `student${i}`, score: randomScore()});
+}
 
-
-// await bigTable.save(students);
+await bigTable.save(students);
 
 const res = await bigTable.where().find();
 console.log(res.length);
