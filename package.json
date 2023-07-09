@@ -1,6 +1,6 @@
 {
   "name": "airdb-lite",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "",
   "type": "module",
   "main": "index.js",
@@ -15,6 +15,7 @@
   },
   "devDependencies": {
     "cross-env": "^7.0.3",
-    "jest": "^29.5.0"
+    "jest": "^29.5.0",
+    "slow-json-stringify": "^2.0.1"
   }
 }
