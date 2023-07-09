@@ -11,7 +11,7 @@ console.timeEnd('delete0');
 console.log(res);
 
 const persons = [];
-for(let i = 0; i < 1000000; i++) {
+for(let i = 0; i < 500000; i++) {
   persons.push({name: `student${i}`, score: 30 + Math.floor(Math.random() * 70)});
 }
 
@@ -22,6 +22,11 @@ console.timeEnd('save0');
 console.time('find0');
 console.log((await personTable.where().find()).length);
 console.timeEnd('find0');
+
+console.time('save1');
+personTable.save({name: 'akira', score: 111});
+personTable.save({name: 'akira2', score: 222});
+console.timeEnd('save1');
 
 // console.time('save1');
 // await personTable.save({name: 'akira', score: 111});
