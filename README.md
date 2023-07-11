@@ -4,7 +4,7 @@ Airdb-lite is a light-weight document oriented NoSQL database based on local fil
 
 Pure JavaScript NoSQL database with no dependency. Flat file, JSON based document database, written by node.js.
 
-**Its api is compatible with the [aircode API](https://docs.aircode.io/reference/server/database-api).**
+**Its api is compatible with the [aircode database API](https://docs.aircode.io/reference/server/database-api).**
 
 ## Features
 
