@@ -1,6 +1,6 @@
 # AirDB Lite
 
-Airdb-lite is a light-weight document oriented nosql database based on local file storage.
+Airdb-lite is a light-weight document oriented NoSQL database based on local file storage.
 
 **Its api is compatible with the [aircode API](https://docs.aircode.io/reference/server/database-api).**
 
