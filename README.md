@@ -118,7 +118,7 @@ console.log(result);
 
 - **Due to the following reasons, it is NOT recommended for use in a production environment:**
   - This is just a single-instance text database and does not have the ability to scale across multiple servers.
-  - Without using schema constraints and indexes(not support yet), the storage performance is limited by the usage of JSON.parse and JSON.stringify. Additionally, the query efficiency is limited by the size of the data.  
+  - Without using schema constraints and indexes(not implemented yet), the storage performance is limited by the usage of JSON.parse and JSON.stringify. Additionally, the query efficiency is limited by the size of the data.  
 
 If you want to deploy your code to a production environment, you can seamlessly migrate to [AirCode](https://aircode.io/) and use `aircode.db`.
 
