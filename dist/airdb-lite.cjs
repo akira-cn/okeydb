@@ -247,7 +247,14 @@ var query_default = class {
   sort(conditions) {
     const conds = Object.entries(conditions);
     this.#sorter = (a, b) => {
-      for (const [k, v] of conds) {
+      for (let [k, v] of conds) {
+        if (typeof v === "string") {
+          if (v.toLowerCase() === "asc") {
+            v = 1;
+          } else if (v.toLowerCase() === "desc") {
+            v = -1;
+          }
+        }
         if (v !== 1 && v !== -1)
           throw new Error(`Invalid sort condition: ${k} ${v}`);
         if (a[k] != b[k]) {
