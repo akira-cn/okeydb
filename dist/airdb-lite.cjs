@@ -414,8 +414,10 @@ var table_default = class {
     return import_node_path.default.join(this.#root, this.name);
   }
   async save(records = [], countResult = false) {
-    if (!Array.isArray(records))
+    const originalRecords = records;
+    if (!Array.isArray(records)) {
       records = [records];
+    }
     await this.getRecords();
     const insertRecords = [];
     const insertIds = [];
@@ -441,7 +443,7 @@ var table_default = class {
     this.#fileSync();
     if (countResult)
       return { modifiedCount, upsertedCount };
-    return records;
+    return originalRecords;
   }
   async #fileSync() {
     await _fileLock(this.filepath);
