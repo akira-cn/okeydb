@@ -1,48 +1,4 @@
-var __create = Object.create;
-var __defProp = Object.defineProperty;
-var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
-var __getOwnPropNames = Object.getOwnPropertyNames;
-var __getProtoOf = Object.getPrototypeOf;
-var __hasOwnProp = Object.prototype.hasOwnProperty;
-var __export = (target, all) => {
-  for (var name in all)
-    __defProp(target, name, { get: all[name], enumerable: true });
-};
-var __copyProps = (to, from, except, desc) => {
-  if (from && typeof from === "object" || typeof from === "function") {
-    for (let key of __getOwnPropNames(from))
-      if (!__hasOwnProp.call(to, key) && key !== except)
-        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
-  }
-  return to;
-};
-var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
-  // If the importer is in node compatibility mode or this is not an ESM
-  // file that has been converted to a CommonJS file using a Babel-
-  // compatible transform (i.e. "__esModule" has not been set), then set
-  // "default" to the CommonJS "module.exports" for node compatibility.
-  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
-  mod
-));
-var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
-
-// index.js
-var airdb_lite_exports = {};
-__export(airdb_lite_exports, {
-  default: () => airdb_lite_default
-});
-module.exports = __toCommonJS(airdb_lite_exports);
-
-// lib/table.js
-var import_node_path = __toESM(require("node:path"), 1);
-var import_node_fs = require("node:fs");
-var import_promises = require("node:fs/promises");
-
 // lib/utils.js
-var import_node_crypto = require("node:crypto");
-function generateID() {
-  return (0, import_node_crypto.randomUUID)({ disableEntropyCache: true });
-}
 function parseCondition(condition = {}) {
   if (typeof condition === "function")
     return condition;
@@ -83,9 +39,6 @@ function getType(value) {
     type = "null";
   }
   return type;
-}
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 // lib/query.js
@@ -293,132 +246,100 @@ var query_default = class {
   }
 };
 
+// node_modules/uuid/dist/esm-browser/rng.js
+var getRandomValues;
+var rnds8 = new Uint8Array(16);
+function rng() {
+  if (!getRandomValues) {
+    getRandomValues = typeof crypto !== "undefined" && crypto.getRandomValues && crypto.getRandomValues.bind(crypto);
+    if (!getRandomValues) {
+      throw new Error("crypto.getRandomValues() not supported. See https://github.com/uuidjs/uuid#getrandomvalues-not-supported");
+    }
+  }
+  return getRandomValues(rnds8);
+}
+
+// node_modules/uuid/dist/esm-browser/stringify.js
+var byteToHex = [];
+for (let i = 0; i < 256; ++i) {
+  byteToHex.push((i + 256).toString(16).slice(1));
+}
+function unsafeStringify(arr, offset = 0) {
+  return (byteToHex[arr[offset + 0]] + byteToHex[arr[offset + 1]] + byteToHex[arr[offset + 2]] + byteToHex[arr[offset + 3]] + "-" + byteToHex[arr[offset + 4]] + byteToHex[arr[offset + 5]] + "-" + byteToHex[arr[offset + 6]] + byteToHex[arr[offset + 7]] + "-" + byteToHex[arr[offset + 8]] + byteToHex[arr[offset + 9]] + "-" + byteToHex[arr[offset + 10]] + byteToHex[arr[offset + 11]] + byteToHex[arr[offset + 12]] + byteToHex[arr[offset + 13]] + byteToHex[arr[offset + 14]] + byteToHex[arr[offset + 15]]).toLowerCase();
+}
+
+// node_modules/uuid/dist/esm-browser/native.js
+var randomUUID = typeof crypto !== "undefined" && crypto.randomUUID && crypto.randomUUID.bind(crypto);
+var native_default = {
+  randomUUID
+};
+
+// node_modules/uuid/dist/esm-browser/v4.js
+function v4(options, buf, offset) {
+  if (native_default.randomUUID && !buf && !options) {
+    return native_default.randomUUID();
+  }
+  options = options || {};
+  const rnds = options.random || (options.rng || rng)();
+  rnds[6] = rnds[6] & 15 | 64;
+  rnds[8] = rnds[8] & 63 | 128;
+  if (buf) {
+    offset = offset || 0;
+    for (let i = 0; i < 16; ++i) {
+      buf[offset + i] = rnds[i];
+    }
+    return buf;
+  }
+  return unsafeStringify(rnds);
+}
+var v4_default = v4;
+
+// lib/platform/browser/index.js
+function createTable(table) {
+}
+async function fileSync(table) {
+}
+async function getRecords(table) {
+}
+
 // lib/table.js
+function _insert(records, ids, storage) {
+  const start = storage.records.length;
+  for (let i = 0; i < ids.length; i++) {
+    const id = ids[i];
+    storage._ids[id] = start + i;
+  }
+  storage.records = [...storage.records, ...records];
+}
 RegExp.prototype.toJSON = function() {
   return { type: "RegExp", source: this.source, flags: this.flags };
 };
-function toJSON() {
-  const _schema = this.records.map((d) => {
-    const s = {};
-    for (const [k, v] of Object.entries(d)) {
-      s[k] = getType(v);
-    }
-    return s;
-  });
-  return {
-    _ids: this._ids,
-    records: this.records,
-    _schema
-  };
-}
-async function getRecordsFromFile(filepath) {
-  await _fileLock(filepath);
-  let records = await (0, import_promises.readFile)(filepath, { charset: "utf8" });
-  await _fileUnlock(filepath);
-  records = JSON.parse(records);
-  records.records = records.records.map((r, i) => {
-    const schema = records._schema[i];
-    for (const [k, v] of Object.entries(schema)) {
-      if (v === "date") {
-        r[k] = new Date(r[k]);
-      } else if (v === "regexp") {
-        r[k] = new RegExp(r[k].source, r[k].flags);
-      }
-    }
-    return r;
-  });
-  delete records._schema;
-  records.toJSON = toJSON;
-  return records;
-}
-function _insert(records, ids, table) {
-  const start = table.records.length;
-  for (let i = 0; i < ids.length; i++) {
-    const id = ids[i];
-    table._ids[id] = start + i;
-  }
-  table.records = [...table.records, ...records];
-}
-async function _fileLock(filepath, unlock = false) {
-  const locker = `${filepath}.lck`;
-  while ((0, import_node_fs.existsSync)(locker)) {
-    await sleep(10);
-  }
-  if (!unlock)
-    (0, import_node_fs.writeFileSync)(locker, "");
-}
-async function _fileUnlock(filepath) {
-  const locker = `${filepath}.lck`;
-  await (0, import_promises.unlink)(locker);
-}
-async function _updateMeta(metafile, version) {
-  await _fileLock(metafile);
-  const metadata = JSON.parse(await (0, import_promises.readFile)(metafile, { charset: "utf8" }));
-  metadata.version = version;
-  await (0, import_promises.writeFile)(metafile, JSON.stringify(metadata), { charset: "utf8" });
-  await _fileUnlock(metafile);
-}
 var table_default = class {
   #name;
-  #root;
-  #records;
-  #meta;
-  #version;
-  constructor(name, { root = ".db", meta = ".meta" } = {}) {
+  #db;
+  constructor(name, { root = ".db", meta = ".meta", database } = {}) {
     if (name.startsWith(".")) {
       throw new TypeError("The table name cannot starts with '.'.");
     }
     this.#name = name;
-    this.#root = root;
-    this.#meta = meta;
-    if (!(0, import_node_fs.existsSync)(this.#root)) {
-      (0, import_node_fs.mkdirSync)(this.#root);
-    }
-    if (!(0, import_node_fs.existsSync)(this.#meta)) {
-      (0, import_node_fs.mkdirSync)(this.#meta);
-    }
-    if (!(0, import_node_fs.existsSync)(this.metapath)) {
-      this.#version = generateID();
-      (0, import_node_fs.writeFileSync)(this.metapath, JSON.stringify({ version: this.#version }), { charset: "utf8" });
-    } else {
-      const { version } = JSON.parse((0, import_node_fs.readFileSync)(this.metapath, { charset: "utf8" }));
-      this.#version = version;
-    }
-    if (!(0, import_node_fs.existsSync)(this.filepath)) {
-      const records = {
-        _ids: {},
-        records: [],
-        toJSON
-      };
-      (0, import_node_fs.writeFileSync)(this.filepath, JSON.stringify(records), { charset: "utf8" });
-      this.#records = records;
-    }
+    this.#db = database;
+    this._storage = createTable(this, root, meta);
   }
-  async getRecords() {
-    await _fileLock(this.metapath);
-    const { version } = JSON.parse(await (0, import_promises.readFile)(this.metapath, { charset: "utf8" }));
-    if (!this.#records || this.#version !== version) {
-      this.#records = await getRecordsFromFile(this.filepath);
-    }
-    this.#version = version;
-    await _fileUnlock(this.metapath);
-    return this.#records.records.slice(0);
+  get database() {
+    return this.#db;
   }
   get name() {
     return this.#name;
   }
-  get metapath() {
-    return import_node_path.default.join(this.#meta, `${this.name}.meta`);
-  }
-  get filepath() {
-    return import_node_path.default.join(this.#root, this.name);
+  async getRecords() {
+    return getRecords(this);
   }
   async save(records = [], countResult = false) {
     const originalRecords = records;
     if (!Array.isArray(records)) {
       records = [records];
     }
-    await this.getRecords();
+    await getRecords(this);
     const insertRecords = [];
     const insertIds = [];
     const datetime = /* @__PURE__ */ new Date();
@@ -427,52 +348,44 @@ var table_default = class {
       record.createdAt = record.createdAt || datetime;
       record.updatedAt = datetime;
       if (record._id != null) {
-        const idx = this.#records._ids[record._id];
+        const idx = this._storage._ids[record._id];
         if (idx >= 0) {
-          this.#records.records[idx] = record;
+          this._storage.records[idx] = record;
         }
       } else {
-        record._id = record._id || generateID();
+        record._id = record._id || v4_default();
         insertRecords.push(record);
         insertIds.push(record._id);
       }
     }
     const upsertedCount = insertRecords.length;
     const modifiedCount = records.length - upsertedCount;
-    _insert(insertRecords, insertIds, this.#records);
-    this.#fileSync();
+    _insert(insertRecords, insertIds, this._storage);
+    await fileSync(this);
     if (countResult)
       return { modifiedCount, upsertedCount };
     return originalRecords;
   }
-  async #fileSync() {
-    await _fileLock(this.filepath);
-    await (0, import_promises.writeFile)(this.filepath, JSON.stringify(this.#records), { charset: "utf8" });
-    const version = generateID();
-    await _updateMeta(this.metapath, version);
-    this.#version = version;
-    await _fileUnlock(this.filepath);
-  }
   async delete(records = []) {
     if (!Array.isArray(records))
       records = [records];
-    await this.getRecords();
+    await getRecords(this);
     let deletedCount = 0;
     const filterMap = {};
     for (let i = 0; i < records.length; i++) {
       const record = records[i];
-      const idx = this.#records._ids[record._id];
+      const idx = this._storage._ids[record._id];
       if (idx >= 0)
         deletedCount++;
       filterMap[idx] = true;
     }
-    this.#records.records = this.#records.records.filter((_, idx) => !filterMap[idx]);
-    this.#records._ids = {};
-    for (let i = 0; i < this.#records.records.length; i++) {
-      const record = this.#records.records[i];
-      this.#records._ids[record._id] = i;
+    this._storage.records = this._storage.records.filter((_, idx) => !filterMap[idx]);
+    this._storage._ids = {};
+    for (let i = 0; i < this._storage.records.length; i++) {
+      const record = this._storage.records[i];
+      this._storage._ids[record._id] = i;
     }
-    this.#fileSync();
+    await fileSync(this);
     return { deletedCount };
   }
   where(conditions) {
@@ -667,18 +580,27 @@ var operator_default = class {
 var db_default = class extends operator_default {
   #root;
   #meta;
+  #name;
   #tables = {};
-  constructor({ root = ".db", meta = ".meta" } = {}) {
+  constructor({ root = ".db", meta = ".meta", name = v4_default() } = {}) {
     super();
     this.#root = root;
     this.#meta = meta;
+    this.#name = name;
   }
-  table(name) {
+  get name() {
+    return this.#name;
+  }
+  table(name, { keyPath = "_id" } = {}) {
     if (!this.#tables[name])
-      this.#tables[name] = new table_default(name, { root: this.#root, meta: this.#meta });
+      this.#tables[name] = new table_default(name, { root: this.#root, meta: this.#meta, database: this, keyPath });
     return this.#tables[name];
   }
 };
 
 // index.js
 var airdb_lite_default = db_default;
+export {
+  db_default as AirDB,
+  airdb_lite_default as default
+};

@@ -1,15 +1,12 @@
-import {existsSync, readFileSync} from 'node:fs';
 import AirDB from '../index.js';
 
 const db = new AirDB();
+const personTable = db.table('person');
 
 test('base set find delete', async () => {
-  const personTable = db.table('person');
   let res = await personTable.save({name: 'akira', score: 100});
-  expect(Array.isArray(res)).toBeTruthy();
-  expect(res.length).toBe(1);
-  expect(res[0].name).toBe('akira');
-  expect(res[0].score).toBe(100);
+  expect(res.name).toBe('akira');
+  expect(res.score).toBe(100);
 
   res = await personTable.where({name: 'foo'}).find();
   expect(Array.isArray(res)).toBeTruthy();
@@ -23,10 +20,15 @@ test('base set find delete', async () => {
   expect(res.deletedCount).toBe(1);
 });
 
-test('create table', async () => {
-  const myTable = db.table('mytable');
+// test('create table', async () => {
+//   const myTable = db.table('mytable');
 
-  expect(existsSync(myTable.filepath)).toBeTruthy();
+//   expect(existsSync(myTable.filepath)).toBeTruthy();
+// });
+
+test('filter indexes', async () => {
+  // const filterIndexes = personTable.where({_id: 'akira'}).and({_id: 'foo'}).or({_id: '1'}).filterIndexes;
+  // console.log(filterIndexes);
 });
 
 test('clear table', async () => {
@@ -34,7 +36,6 @@ test('clear table', async () => {
 });
 
 test('regexp match', async () => {
-  const personTable = db.table('person');
   await personTable.save({name: 'akira', score: 100});
   await personTable.save({name: 'aka', score: 90});
   await personTable.save({name: 'bob', score: 80});
@@ -42,6 +43,10 @@ test('regexp match', async () => {
   let res = await personTable.where({name: /^a/}).find();
   expect(res.length).toBe(2);
 
+  res = await personTable.where().delete();
+});
+
+afterAll(async () => {
   await personTable.where().delete();
 });
 

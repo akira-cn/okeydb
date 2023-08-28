@@ -1,23 +1,27 @@
 {
-  "name": "airdb-lite",
-  "version": "0.4.0",
+  "name": "airdb",
+  "version": "0.1.0",
   "description": "",
   "type": "module",
-  "main": "index.js",
+  "main": "dist/airdb.cjs",
+  "module": "index.js",
+  "browser": "dist/airdb.browser.js",
   "scripts": {
     "build": "node build.js",
     "prepublishOnly": "npm run build",
-    "test": "cross-env NODE_OPTIONS=--experimental-vm-modules jest"
+    "test": "cross-env NODE_OPTIONS=--experimental-vm-modules jest",
+    "test:browser": "npm run build && cp ./dist/airdb.browser.mjs ./test/dist/airdb.browser.mjs"
   },
   "keywords": [],
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "eslint": "^8.43.0"
+    "uuid": "^9.0.0"
   },
   "devDependencies": {
     "cross-env": "^7.0.3",
     "esbuild": "^0.18.14",
+    "eslint": "^8.47.0",
     "jest": "^29.5.0"
   }
 }

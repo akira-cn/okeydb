@@ -1,3 +1,4 @@
-import Database from "./lib/db.js";
+import AirDB from "./lib/db.js";
 
-export default Database;
+export { AirDB };
+export default AirDB;
