@@ -8,7 +8,23 @@
 <body>
   <script type="module">
     import { AirDB } from './dist/airdb.browser.mjs';
-    console.log( AirDB );
+    function random(from, to) {
+      return from + Math.random() * (to - from);
+    }
+    const db = new AirDB({version: 2});
+    const table = db.table('person');
+    console.log(table);
+
+    // for(let i = 0; i < 10; i++) {
+    //   const data = {
+    //     name: `student${i}`,
+    //     score: random(50, 100),
+    //   };
+    //   await table.save(data);
+    // }
+
+    const res = await table.where().find();
+    console.log(res);
   </script>
 </body>
 </html>

@@ -7,7 +7,8 @@
   "module": "index.js",
   "browser": "dist/airdb.browser.js",
   "scripts": {
-    "build": "node build.js",
+    "dev": "node build.js",
+    "build": "mode=production node build.js",
     "prepublishOnly": "npm run build",
     "test": "cross-env NODE_OPTIONS=--experimental-vm-modules jest",
     "test:browser": "npm run build && cp ./dist/airdb.browser.mjs ./test/dist/airdb.browser.mjs"
