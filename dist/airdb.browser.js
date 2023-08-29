@@ -3,6 +3,9 @@ var AirDB = (() => {
   var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
   var __getOwnPropNames = Object.getOwnPropertyNames;
   var __hasOwnProp = Object.prototype.hasOwnProperty;
+  var __esm = (fn, res) => function __init() {
+    return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+  };
   var __export = (target, all) => {
     for (var name in all)
       __defProp(target, name, { get: all[name], enumerable: true });
@@ -16,6 +19,48 @@ var AirDB = (() => {
     return to;
   };
   var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
+
+  // lib/platform/browser/index.js
+  var browser_exports = {};
+  __export(browser_exports, {
+    createTable: () => createTable,
+    fileSync: () => fileSync,
+    flushData: () => flushData,
+    getRecords: () => getRecords
+  });
+  async function createTable(table) {
+    const dbName = table.database.name;
+    if (!dbInstances[dbName]) {
+      dbInstances[dbName] = await new Promise((resolve, reject) => {
+        const request = window.indexedDB.open(dbName);
+        request.onerror = function() {
+          reject(new Error("Datebase error."));
+        };
+        request.onsuccess = function() {
+          resolve(request.result);
+        };
+      });
+    }
+    const db = dbInstances[dbName];
+    const tableName = table.name;
+    if (!db.objectStoreNames.contains(tableName)) {
+      db.createObjectStore(tableName, { keyPath: "_id" });
+    }
+    return new Storage({ db, tableName });
+  }
+  async function fileSync() {
+  }
+  async function flushData() {
+  }
+  async function getRecords(table, { filter, sorter, skip, limit, indexes } = {}) {
+    const db = table._storage.db;
+  }
+  var dbInstances;
+  var init_browser = __esm({
+    "lib/platform/browser/index.js"() {
+      dbInstances = {};
+    }
+  });
 
   // index.js
   var airdb_lite_exports = {};
@@ -68,6 +113,27 @@ var AirDB = (() => {
   }
 
   // lib/query.js
+  function updateFilterIndex(query, conditions, filterIndexes = {}, phase = "and") {
+    const indexes = query.table.indexes;
+    for (let i = 0; i < conditions.length; i++) {
+      const condition = conditions[i];
+      let hasIndex = false;
+      for (const [k, v] of Object.entries(condition)) {
+        if (k in indexes) {
+          hasIndex = true;
+          filterIndexes[k] = filterIndexes[k] || /* @__PURE__ */ new Set();
+          if (!(typeof v === "function"))
+            filterIndexes[k].add(v);
+          if (phase === "and" && filterIndexes[k].size > 1)
+            filterIndexes[k].clear();
+        }
+      }
+      if (!hasIndex && phase === "or") {
+        return null;
+      }
+    }
+    return filterIndexes;
+  }
   var query_default = class {
     #table;
     #filter;
@@ -80,10 +146,12 @@ var AirDB = (() => {
     #insertFields = null;
     #setOnInsertFields = null;
     #upsert = false;
-    constructor(conditions, table) {
-      this.#filter = mergeConditions([conditions]);
+    #filterIndexes = {};
+    constructor(condition, table) {
+      this.#filter = mergeConditions([condition]);
       this.#table = table;
-      this.#insertFields = { ...conditions };
+      this.#insertFields = { ...condition };
+      this.#filterIndexes = updateFilterIndex(this, [condition], {}, "and");
     }
     and(...conditions) {
       const left = this.#filter;
@@ -92,6 +160,8 @@ var AirDB = (() => {
       for (let i = 0; i < conditions.length; i++) {
         Object.assign(this.#insertFields, conditions[i]);
       }
+      if (this.#filterIndexes)
+        this.#filterIndexes = updateFilterIndex(this, conditions, this.#filterIndexes, "and");
       return this;
     }
     or(...conditions) {
@@ -99,6 +169,8 @@ var AirDB = (() => {
       const right = mergeConditions(conditions, "or");
       this.#filter = (record) => left(record) || right(record);
       this.#insertFields = {};
+      if (this.#filterIndexes)
+        this.#filterIndexes = updateFilterIndex(this, conditions, this.#filterIndexes, "or");
       return this;
     }
     nor(...conditions) {
@@ -106,16 +178,16 @@ var AirDB = (() => {
       const right = mergeConditions(conditions, "nor");
       this.#filter = (record) => !(left(record) || right(record));
       this.#insertFields = {};
+      this.#filterIndexes = null;
       return this;
     }
     async find() {
-      const records = await this.#table.getRecords();
-      let filtedRecords = records.filter(this.#filter);
-      if (this.#sorter)
-        filtedRecords.sort(this.#sorter);
-      if (this.#skip > 0 || this.#limit > 0) {
-        filtedRecords = filtedRecords.slice(this.#skip, this.#skip + this.#limit);
-      }
+      let filtedRecords = await this.#table.getRecords({
+        filter: this.#filter,
+        sorter: this.#sorter,
+        skip: this.#skip,
+        limit: this.#limit
+      });
       if (this.#projection) {
         const { type, fields } = this.#projection;
         if (type === "inclusion") {
@@ -137,11 +209,13 @@ var AirDB = (() => {
       return filtedRecords;
     }
     async findOne() {
-      if (this.#sorter || this.#skip > 0 || this.#limit > 0) {
-        return (await this.find())[0] || null;
-      }
-      const records = await this.#table.getRecords();
-      const record = records.find(this.#filter) || null;
+      const records = await this.#table.getRecords({
+        filter: this.#filter,
+        sorter: this.#sorter,
+        skip: 0,
+        limit: 1
+      });
+      const record = records[0];
       if (this.#projection) {
         const { type, fields } = this.#projection;
         const ret = {};
@@ -270,6 +344,12 @@ var AirDB = (() => {
     get table() {
       return this.#table;
     }
+    get filterIndexes() {
+      const filterIndexes = this.#filterIndexes || {};
+      if (Object.keys(filterIndexes).length)
+        return filterIndexes;
+      return null;
+    }
   };
 
   // node_modules/uuid/dist/esm-browser/rng.js
@@ -320,105 +400,107 @@ var AirDB = (() => {
   }
   var v4_default = v4;
 
-  // lib/platform/browser/index.js
-  function createTable(table) {
-  }
-  async function fileSync(table) {
-  }
-  async function getRecords(table) {
-  }
-
   // lib/table.js
-  function _insert(records, ids, storage) {
-    const start = storage.records.length;
-    for (let i = 0; i < ids.length; i++) {
-      const id = ids[i];
-      storage._ids[id] = start + i;
+  var Table = (async () => {
+    let platform;
+    if (true) {
+      platform = await Promise.resolve().then(() => (init_browser(), browser_exports));
+    } else {
+      platform = await null;
     }
-    storage.records = [...storage.records, ...records];
-  }
-  RegExp.prototype.toJSON = function() {
-    return { type: "RegExp", source: this.source, flags: this.flags };
-  };
-  var table_default = class {
-    #name;
-    #db;
-    constructor(name, { root = ".db", meta = ".meta", database } = {}) {
-      if (name.startsWith(".")) {
-        throw new TypeError("The table name cannot starts with '.'.");
-      }
-      this.#name = name;
-      this.#db = database;
-      this._storage = createTable(this, root, meta);
-    }
-    get database() {
-      return this.#db;
-    }
-    get name() {
-      return this.#name;
-    }
-    async getRecords() {
-      return getRecords(this);
-    }
-    async save(records = [], countResult = false) {
-      const originalRecords = records;
-      if (!Array.isArray(records)) {
-        records = [records];
-      }
-      await getRecords(this);
-      const insertRecords = [];
-      const insertIds = [];
-      const datetime = /* @__PURE__ */ new Date();
-      for (let i = 0; i < records.length; i++) {
-        const record = records[i];
-        record.createdAt = record.createdAt || datetime;
-        record.updatedAt = datetime;
-        if (record._id != null) {
-          const idx = this._storage._ids[record._id];
-          if (idx >= 0) {
-            this._storage.records[idx] = record;
-          }
-        } else {
-          record._id = record._id || v4_default();
-          insertRecords.push(record);
-          insertIds.push(record._id);
+    const { fileSync: fileSync2, getRecords: getRecords2, flushData: flushData2, createTable: createTable2 } = platform;
+    RegExp.prototype.toJSON = function() {
+      return { type: "RegExp", source: this.source, flags: this.flags };
+    };
+    return class {
+      #name;
+      #db;
+      #ready;
+      #indexes;
+      constructor(name, { root = ".db", meta = ".meta", database, indexes } = {}) {
+        if (name.startsWith(".")) {
+          throw new TypeError("The table name cannot starts with '.'.");
         }
+        this.#name = name;
+        this.#db = database;
+        this.#indexes = {
+          _id: true,
+          // indent
+          ...indexes
+        };
+        this.#ready = createTable2(this, root, meta).then((res) => {
+          this._storage = res;
+        });
       }
-      const upsertedCount = insertRecords.length;
-      const modifiedCount = records.length - upsertedCount;
-      _insert(insertRecords, insertIds, this._storage);
-      await fileSync(this);
-      if (countResult)
-        return { modifiedCount, upsertedCount };
-      return originalRecords;
-    }
-    async delete(records = []) {
-      if (!Array.isArray(records))
-        records = [records];
-      await getRecords(this);
-      let deletedCount = 0;
-      const filterMap = {};
-      for (let i = 0; i < records.length; i++) {
-        const record = records[i];
-        const idx = this._storage._ids[record._id];
-        if (idx >= 0)
-          deletedCount++;
-        filterMap[idx] = true;
+      get indexes() {
+        return this.#indexes;
       }
-      this._storage.records = this._storage.records.filter((_, idx) => !filterMap[idx]);
-      this._storage._ids = {};
-      for (let i = 0; i < this._storage.records.length; i++) {
-        const record = this._storage.records[i];
-        this._storage._ids[record._id] = i;
+      get database() {
+        return this.#db;
       }
-      await fileSync(this);
-      return { deletedCount };
-    }
-    where(conditions) {
-      const query = new query_default(conditions, this);
-      return query;
-    }
-  };
+      get name() {
+        return this.#name;
+      }
+      async getRecords({ filter, sorter, skip, limit } = {}) {
+        await this.#ready;
+        return getRecords2(this, { filter, sorter, skip, limit });
+      }
+      async save(records = [], countResult = false) {
+        await this.#ready;
+        const originalRecords = records;
+        if (!Array.isArray(records)) {
+          records = [records];
+        }
+        await flushData2(this);
+        const insertRecords = [];
+        const datetime = /* @__PURE__ */ new Date();
+        for (let i = 0; i < records.length; i++) {
+          const record = records[i];
+          record.createdAt = record.createdAt || datetime;
+          record.updatedAt = datetime;
+          if (record._id != null) {
+            const idx = this._storage.getItemIndex(record._id);
+            if (idx >= 0) {
+              await this._storage.put(idx, record);
+            }
+          } else {
+            record._id = record._id || v4_default();
+            insertRecords.push(record);
+          }
+        }
+        const upsertedCount = insertRecords.length;
+        const modifiedCount = records.length - upsertedCount;
+        await this._storage.add(insertRecords);
+        await fileSync2(this);
+        if (countResult)
+          return { modifiedCount, upsertedCount };
+        return originalRecords;
+      }
+      async delete(records = []) {
+        await this.#ready;
+        if (!Array.isArray(records))
+          records = [records];
+        await flushData2(this);
+        let deletedCount = 0;
+        const filterMap = {};
+        for (let i = 0; i < records.length; i++) {
+          const record = records[i];
+          const idx = this._storage.getItemIndex(record._id);
+          if (idx >= 0)
+            deletedCount++;
+          filterMap[idx] = true;
+        }
+        await this._storage.delete(filterMap);
+        await fileSync2(this);
+        return { deletedCount };
+      }
+      where(condition = {}) {
+        const query = new query_default(condition, this);
+        return query;
+      }
+    };
+  })();
+  var table_default = Table;
 
   // lib/operator.js
   var operator_default = class {
@@ -608,7 +690,7 @@ var AirDB = (() => {
     #meta;
     #name;
     #tables = {};
-    constructor({ root = ".db", meta = ".meta", name = v4_default() } = {}) {
+    constructor({ root = ".db", meta = ".meta", name = "airdb" } = {}) {
       super();
       this.#root = root;
       this.#meta = meta;
@@ -617,9 +699,9 @@ var AirDB = (() => {
     get name() {
       return this.#name;
     }
-    table(name, { keyPath = "_id" } = {}) {
+    table(name) {
       if (!this.#tables[name])
-        this.#tables[name] = new table_default(name, { root: this.#root, meta: this.#meta, database: this, keyPath });
+        this.#tables[name] = new table_default(name, { root: this.#root, meta: this.#meta, database: this });
       return this.#tables[name];
     }
   };
