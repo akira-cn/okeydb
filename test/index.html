@@ -30,7 +30,7 @@
     const students = await table.where().find();
     console.log(students);
 
-    const res = await table.where({_id: students[0]._id}).or({_id: students[1]._id, name: 'student4', score: db.gt(60)}).find();
+    const res = await table.where({_id: students[0]._id}).or({_id: students[1]._id}, {name: 'student4'}, {score: db.gt(60)}).find();
 
     console.log(res);
   </script>

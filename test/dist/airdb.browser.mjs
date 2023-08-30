@@ -227,9 +227,9 @@ async function fileSync() {
 async function flushData() {
 }
 async function getRecords(table, { filter, sorter, skip, limit, filterIndexes } = {}) {
-  const records = [];
   const objectStore = table._storage.transaction();
   if (filterIndexes) {
+    const records = [];
     const indexes = Object.keys(filterIndexes);
     for (let i = 0; i < indexes.length; i++) {
       const indexName = indexes[i];
@@ -258,7 +258,7 @@ async function getRecords(table, { filter, sorter, skip, limit, filterIndexes } 
           });
         } else if (value && !value[Symbol.for("index-range")]) {
           return new Promise((resolve, reject) => {
-            const request = objectStore.index(indexName).openCursor();
+            const request = objectStore.index(indexName).openCursor(IDBKeyRange.only(value));
             const records2 = [];
             request.onerror = function() {
               reject(new Error(request));
@@ -267,6 +267,7 @@ async function getRecords(table, { filter, sorter, skip, limit, filterIndexes } 
               const cursor = request.result;
               if (cursor) {
                 records2.push(cursor.value);
+                cursor.continue();
               } else {
                 resolve(records2);
               }
@@ -308,14 +309,22 @@ async function getRecords(table, { filter, sorter, skip, limit, filterIndexes } 
     const ids = /* @__PURE__ */ new Set();
     for (let i = 0; i < records.length; i++) {
       const record = records[i];
-      if (!record || ids.has(record._id))
+      if (!record || ids.has(record._id) || !filter(record))
         continue;
       ids.add(record._id);
       ret.push(record);
+      if (!sorter && (skip > 0 || limit > 0) && ret.length >= skip + limit) {
+        return ret.slice(skip, skip + limit);
+      }
+    }
+    if (sorter)
+      ret.sort(sorter);
+    if (skip > 0 || limit > 0) {
+      return ret.slice(skip, skip + limit);
     }
     return ret;
   } else {
-    return new Promise((resolve, reject) => {
+    const records = await new Promise((resolve, reject) => {
       const request = objectStore.getAll();
       request.onerror = function() {
         reject(new Error(request));
@@ -324,6 +333,21 @@ async function getRecords(table, { filter, sorter, skip, limit, filterIndexes } 
         resolve(request.result);
       };
     });
+    let filtedRecords;
+    if (!sorter && skip === 0 && limit === 1) {
+      filtedRecords = records.find(filter);
+      if (filtedRecords)
+        return [filtedRecords];
+      return [];
+    } else {
+      filtedRecords = records.filter(filter);
+    }
+    if (sorter)
+      filtedRecords.sort(sorter);
+    if (skip > 0 || limit > 0) {
+      filtedRecords = filtedRecords.slice(skip, skip + limit);
+    }
+    return filtedRecords;
   }
 }
 var dbInstances, version;
