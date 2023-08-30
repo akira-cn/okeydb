@@ -12,8 +12,12 @@
       return from + Math.random() * (to - from);
     }
     const db = new AirDB({version: 2});
-    const table = db.table('person');
+    const table = db.table('person', {indexes: {name : true, score: false}});
     console.log(table);
+
+    // const table2 = db.table('person2');
+    // console.log(table2);
+    // await table2.save({x: 1});
 
     // for(let i = 0; i < 10; i++) {
     //   const data = {
@@ -23,7 +27,11 @@
     //   await table.save(data);
     // }
 
-    const res = await table.where().find();
+    const students = await table.where().find();
+    console.log(students);
+
+    const res = await table.where({_id: students[0]._id}).or({_id: students[1]._id, name: 'student4', score: db.gt(60)}).find();
+
     console.log(res);
   </script>
 </body>

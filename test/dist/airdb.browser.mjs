@@ -76,59 +76,262 @@ __export(browser_exports, {
   flushData: () => flushData,
   getRecords: () => getRecords
 });
+function upgradeDB(metaDB) {
+  return new Promise((resolve, reject) => {
+    const transaction = metaDB.transaction(["version"], "readwrite");
+    const objectStore = transaction.objectStore("version");
+    const request = objectStore.get(1);
+    request.onerror = function() {
+      reject(new Error(request));
+    };
+    request.onsuccess = function() {
+      const req = objectStore.put({ id: 1, version: request.result.version + 1 });
+      req.onerror = function() {
+        reject(new Error(req));
+      };
+      req.onsuccess = function() {
+        resolve(request.result.version + 1);
+      };
+    };
+  });
+}
 async function createTable(table) {
   const dbName = table.database.name;
-  const version = table.database.version;
+  const meta = `${dbName}.__meta__`;
   const tableName = table.name;
-  if (!dbInstances[dbName]) {
-    dbInstances[dbName] = await new Promise((resolve, reject) => {
-      const request = window.indexedDB.open(dbName, version);
+  if (!dbInstances[tableName]) {
+    const metaDB = await new Promise((resolve, reject) => {
+      const request = window.indexedDB.open(meta);
       request.onerror = function() {
         reject(new Error(request));
       };
       request.onsuccess = function() {
         const db2 = request.result;
-        if (db2.objectStoreNames.contains(tableName)) {
-          resolve(db2);
-        }
+        resolve(db2);
       };
       request.onupgradeneeded = function() {
         const db2 = request.result;
-        const objectStore = db2.createObjectStore(tableName, { keyPath: "_id" });
+        db2.createObjectStore("version", { keyPath: "id" });
+        db2.createObjectStore("tables", { keyPath: "name" });
+      };
+    });
+    if (!version)
+      version = await new Promise((resolve, reject) => {
+        const transaction = metaDB.transaction(["version"], "readwrite");
+        const objectStore = transaction.objectStore("version");
+        const request = objectStore.get(1);
+        request.onerror = function() {
+          reject(new Error(request));
+        };
+        request.onsuccess = function() {
+          if (!request.result) {
+            const req = objectStore.add({ id: 1, version: 0 });
+            req.onerror = function() {
+              reject(new Error(req));
+            };
+            req.onsuccess = function() {
+              resolve(0);
+            };
+          } else {
+            resolve(request.result.version);
+          }
+        };
+      });
+    const tableData = await new Promise((resolve, reject) => {
+      const transaction = metaDB.transaction(["tables"], "readwrite");
+      const objectStore = transaction.objectStore("tables");
+      const request = objectStore.get(tableName);
+      request.onerror = function() {
+        reject(new Error(request));
+      };
+      request.onsuccess = function() {
+        resolve(request.result);
+      };
+    });
+    if (!tableData) {
+      await new Promise((resolve, reject) => {
+        const transaction = metaDB.transaction(["tables"], "readwrite");
+        const objectStore = transaction.objectStore("tables");
+        const request = objectStore.add({ name: tableName, indexes: table.indexes });
+        request.onerror = function() {
+          reject(new Error(request));
+        };
+        request.onsuccess = function() {
+          resolve(request.result);
+        };
+      });
+      version = await upgradeDB(metaDB);
+    } else {
+      const needsUpdate = await new Promise((resolve, reject) => {
+        const transaction = metaDB.transaction(["tables"], "readwrite");
+        const objectStore = transaction.objectStore("tables");
+        const request = objectStore.get(tableName);
+        request.onerror = function() {
+          reject(new Error(request));
+        };
+        request.onsuccess = function() {
+          if (JSON.stringify(request.result.indexes) === JSON.stringify(table.indexes)) {
+            resolve(false);
+          } else {
+            const req = objectStore.put({ name: tableName, indexes: table.indexes });
+            req.onerror = function() {
+              reject(new Error(req));
+            };
+            req.onsuccess = function() {
+              resolve(true);
+            };
+          }
+        };
+      });
+      if (needsUpdate) {
+        version = await upgradeDB(metaDB);
+      }
+    }
+    dbInstances[tableName] = await new Promise((resolve, reject) => {
+      const request = window.indexedDB.open(dbName, version);
+      request.onerror = function() {
+        reject(new Error(request));
+      };
+      request.onsuccess = function() {
+        resolve(request.result);
+      };
+      request.onupgradeneeded = function() {
+        const db2 = request.result;
+        const upgradeTransaction = request.transaction;
+        let objectStore;
+        if (!db2.objectStoreNames.contains(tableName)) {
+          objectStore = db2.createObjectStore(tableName, { keyPath: "_id" });
+        } else {
+          objectStore = upgradeTransaction.objectStore(tableName);
+        }
         const indexes = table.indexes;
+        const len = objectStore.indexNames.length;
+        for (let i = len - 1; i >= 0; i--) {
+          objectStore.deleteIndex(objectStore.indexNames[i]);
+        }
         for (const [k, v] of Object.entries(indexes)) {
           if (k !== "_id") {
-            objectStore.createIndex(k, k, { unique: v });
+            if (!objectStore.indexNames.contains(k)) {
+              objectStore.createIndex(k, k, { unique: v });
+            }
           }
         }
-        resolve(db2);
       };
     });
   }
-  const db = dbInstances[dbName];
+  const db = dbInstances[tableName];
   return new Storage({ db, tableName });
 }
 async function fileSync() {
 }
 async function flushData() {
 }
-async function getRecords(table, { filter, sorter, skip, limit, indexes } = {}) {
+async function getRecords(table, { filter, sorter, skip, limit, filterIndexes } = {}) {
+  const records = [];
   const objectStore = table._storage.transaction();
-  return new Promise((resolve, reject) => {
-    const request = objectStore.getAll();
-    request.onerror = function() {
-      reject(new Error(request));
-    };
-    request.onsuccess = function() {
-      resolve(request.result);
-    };
-  });
+  if (filterIndexes) {
+    const indexes = Object.keys(filterIndexes);
+    for (let i = 0; i < indexes.length; i++) {
+      const indexName = indexes[i];
+      const isUnique = table.indexes[indexName];
+      const indexValues = [...filterIndexes[indexName]];
+      const ret2 = await Promise.all(indexValues.map(async (value) => {
+        if (indexName === "_id") {
+          return new Promise((resolve, reject) => {
+            const request = objectStore.get(value);
+            request.onerror = function() {
+              reject(new Error(request));
+            };
+            request.onsuccess = function() {
+              resolve(request.result);
+            };
+          });
+        } else if (isUnique && value && !value[Symbol.for("index-range")]) {
+          return new Promise((resolve, reject) => {
+            const request = objectStore.index(indexName).get(value);
+            request.onerror = function() {
+              reject(new Error(request));
+            };
+            request.onsuccess = function() {
+              resolve(request.result);
+            };
+          });
+        } else if (value && !value[Symbol.for("index-range")]) {
+          return new Promise((resolve, reject) => {
+            const request = objectStore.index(indexName).openCursor();
+            const records2 = [];
+            request.onerror = function() {
+              reject(new Error(request));
+            };
+            request.onsuccess = function() {
+              const cursor = request.result;
+              if (cursor) {
+                records2.push(cursor.value);
+              } else {
+                resolve(records2);
+              }
+            };
+          });
+        } else {
+          const type = value[Symbol.for("index-range")];
+          let range = null;
+          if (type === "gt") {
+            range = IDBKeyRange.lowerBound(value.value, true);
+          } else if (type === "gte") {
+            range = IDBKeyRange.lowerBound(value.value);
+          } else if (type === "lt") {
+            range = IDBKeyRange.upperBound(value.value, true);
+          } else if (type === "lte") {
+            range = IDBKeyRange.upperBound(value.value);
+          }
+          return new Promise((resolve, reject) => {
+            const request = objectStore.index(indexName).openCursor(range);
+            const records2 = [];
+            request.onerror = function() {
+              reject(new Error(request));
+            };
+            request.onsuccess = function() {
+              const cursor = request.result;
+              if (cursor) {
+                records2.push(cursor.value);
+                cursor.continue();
+              } else {
+                resolve(records2);
+              }
+            };
+          });
+        }
+      }));
+      records.push(...ret2.flat());
+    }
+    const ret = [];
+    const ids = /* @__PURE__ */ new Set();
+    for (let i = 0; i < records.length; i++) {
+      const record = records[i];
+      if (!record || ids.has(record._id))
+        continue;
+      ids.add(record._id);
+      ret.push(record);
+    }
+    return ret;
+  } else {
+    return new Promise((resolve, reject) => {
+      const request = objectStore.getAll();
+      request.onerror = function() {
+        reject(new Error(request));
+      };
+      request.onsuccess = function() {
+        resolve(request.result);
+      };
+    });
+  }
 }
-var dbInstances;
+var dbInstances, version;
 var init_browser = __esm({
   "lib/platform/browser/index.js"() {
     init_storage();
     dbInstances = {};
+    version = 0;
   }
 });
 
@@ -187,6 +390,8 @@ function updateFilterIndex(query, conditions, filterIndexes = {}, phase = "and")
         filterIndexes[k] = filterIndexes[k] || /* @__PURE__ */ new Set();
         if (!(typeof v === "function"))
           filterIndexes[k].add(v);
+        else if (v._type)
+          filterIndexes[k].add({ [Symbol.for("index-range")]: v._type, value: v._value });
         if (phase === "and" && filterIndexes[k].size > 1)
           filterIndexes[k].clear();
       }
@@ -249,7 +454,8 @@ var query_default = class {
       filter: this.#filter,
       sorter: this.#sorter,
       skip: this.#skip,
-      limit: this.#limit
+      limit: this.#limit,
+      filterIndexes: this.filterIndexes
     });
     if (this.#projection) {
       const { type, fields } = this.#projection;
@@ -276,7 +482,8 @@ var query_default = class {
       filter: this.#filter,
       sorter: this.#sorter,
       skip: 0,
-      limit: 1
+      limit: 1,
+      filterIndexes: this.filterIndexes
     });
     const record = records[0];
     if (this.#projection) {
@@ -506,9 +713,9 @@ var Table = await (async () => {
     get name() {
       return this.#name;
     }
-    async getRecords({ filter, sorter, skip, limit } = {}) {
+    async getRecords({ filter, sorter, skip, limit, filterIndexes } = {}) {
       await this.#ready;
-      return getRecords2(this, { filter, sorter, skip, limit });
+      return getRecords2(this, { filter, sorter, skip, limit, filterIndexes });
     }
     async save(records = [], countResult = false) {
       await this.#ready;
@@ -570,28 +777,40 @@ var table_default = Table;
 // lib/operator.js
 var operator_default = class {
   gt(value) {
-    return (d) => d > value;
+    const fn = (d) => d > value;
+    fn._type = "gt";
+    fn._value = value;
+    return fn;
   }
   greaterThan(value) {
-    return (d) => d > value;
+    return this.gt(value);
   }
   gte(value) {
-    return (d) => d >= value;
+    const fn = (d) => d >= value;
+    fn._type = "gte";
+    fn._value = value;
+    return fn;
   }
   greaterThanOrEqual(value) {
-    return (d) => d >= value;
+    return this.gte(value);
   }
   lt(value) {
-    return (d) => d < value;
+    const fn = (d) => d < value;
+    fn._type = "lt";
+    fn._value = value;
+    return fn;
   }
   lessThan(value) {
-    return (d) => d < value;
+    return this.lt(value);
   }
   lte(value) {
-    return (d) => d <= value;
+    const fn = (d) => d <= value;
+    fn._type = "lte";
+    fn._value = value;
+    return fn;
   }
   lessThanOrEqual(value) {
-    return (d) => d <= value;
+    return this.lte(value);
   }
   eq(value) {
     return (d) => d == value;
@@ -756,12 +975,12 @@ var db_default = class extends operator_default {
   #name;
   #version;
   #tables = {};
-  constructor({ root = ".db", meta = ".meta", name = "airdb", version = 1 } = {}) {
+  constructor({ root = ".db", meta = ".meta", name = "airdb", version: version2 = 1 } = {}) {
     super();
     this.#root = root;
     this.#meta = meta;
     this.#name = name;
-    this.#version = version;
+    this.#version = version2;
   }
   get name() {
     return this.#name;
@@ -769,9 +988,9 @@ var db_default = class extends operator_default {
   get version() {
     return this.#version;
   }
-  table(name) {
+  table(name, { indexes } = {}) {
     if (!this.#tables[name])
-      this.#tables[name] = new table_default(name, { root: this.#root, meta: this.#meta, database: this });
+      this.#tables[name] = new table_default(name, { root: this.#root, meta: this.#meta, database: this, indexes });
     return this.#tables[name];
   }
 };
