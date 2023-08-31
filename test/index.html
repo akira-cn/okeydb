@@ -40,7 +40,7 @@
     // console.log(res);
 
     const res2 = await table.where({score: db.gt(70).lt(90), name: /^student[1-6]/})
-      .skip(1)
+      // .skip(1)
       // .limit(3)
       // .sort({score: 'desc'})
       .sort({score: 'desc'})

@@ -228,6 +228,7 @@ async function flushData() {
 }
 async function getRecords(table, { filter, sorter, skip, limit, filterIndexes, rawSorter } = {}) {
   const objectStore = table._storage.transaction();
+  const notIndexFilter = table[_notIndexFilter2];
   if (filterIndexes) {
     const records = [];
     const indexes = Object.keys(filterIndexes);
@@ -316,13 +317,27 @@ async function getRecords(table, { filter, sorter, skip, limit, filterIndexes, r
             request.onsuccess = function() {
               const cursor = request.result;
               if (cursor) {
-                if (filter(cursor.value)) {
-                  records2.push(cursor.value);
-                }
-                if (singleIndex && !sorter && records2.length === skip + limit) {
-                  resolve(records2);
+                if (singleIndex && !notIndexFilter && !sorter) {
+                  if (skip > 0) {
+                    cursor.advance(skip);
+                    skip = 0;
+                  } else {
+                    records2.push(cursor.value);
+                    if (records2.length === limit) {
+                      resolve(records2);
+                    } else {
+                      cursor.continue();
+                    }
+                  }
                 } else {
-                  cursor.continue();
+                  if (filter(cursor.value)) {
+                    records2.push(cursor.value);
+                  }
+                  if (singleIndex && !sorter && records2.length === skip + limit) {
+                    resolve(records2);
+                  } else {
+                    cursor.continue();
+                  }
                 }
               } else {
                 resolve(records2);
@@ -375,13 +390,27 @@ async function getRecords(table, { filter, sorter, skip, limit, filterIndexes, r
             request.onsuccess = function() {
               const cursor = request.result;
               if (cursor) {
-                if (filter(cursor.value)) {
-                  records3.push(cursor.value);
-                }
-                if (records3.length === skip + limit) {
-                  resolve(records3);
+                if (!notIndexFilter) {
+                  if (skip > 0) {
+                    cursor.advance(skip);
+                    skip = 0;
+                  } else {
+                    records3.push(cursor.value);
+                    if (records3.length === limit) {
+                      resolve(records3);
+                    } else {
+                      cursor.continue();
+                    }
+                  }
                 } else {
-                  cursor.continue();
+                  if (filter(cursor.value)) {
+                    records3.push(cursor.value);
+                  }
+                  if (records3.length === skip + limit) {
+                    resolve(records3);
+                  } else {
+                    cursor.continue();
+                  }
                 }
               } else {
                 resolve(records3);
@@ -418,12 +447,13 @@ async function getRecords(table, { filter, sorter, skip, limit, filterIndexes, r
     return filtedRecords;
   }
 }
-var dbInstances, _filter2, version;
+var dbInstances, _filter2, _notIndexFilter2, version;
 var init_browser = __esm({
   "lib/platform/browser/index.js"() {
     init_storage();
     dbInstances = {};
     _filter2 = Symbol.for("airdb-filter");
+    _notIndexFilter2 = Symbol.for("not-index-filter");
     version = 0;
   }
 });
@@ -475,8 +505,10 @@ function getType(value) {
 }
 
 // lib/query.js
+var _notIndexFilter = Symbol.for("not-index-filter");
 function updateFilterIndex(query, conditions, filterIndexes = {}, phase = "and") {
   const indexes = query.table.indexes;
+  let notIndexFilter = false;
   for (let i = 0; i < conditions.length; i++) {
     const condition = conditions[i];
     let hasIndex = false;
@@ -487,12 +519,16 @@ function updateFilterIndex(query, conditions, filterIndexes = {}, phase = "and")
         filterIndexes[k].add(v);
         if (phase === "and" && filterIndexes[k].size > 1)
           filterIndexes[k].clear();
+      } else {
+        notIndexFilter = true;
       }
     }
     if (!hasIndex && phase === "or") {
+      query.table[_notIndexFilter] = notIndexFilter;
       return null;
     }
   }
+  query.table[_notIndexFilter] = notIndexFilter;
   return filterIndexes;
 }
 var _filter = Symbol.for("airdb-filter");
@@ -542,6 +578,7 @@ var query_default = class {
     this.#filter = (record) => !(left(record) || right(record));
     this.#insertFields = {};
     this.#filterIndexes = null;
+    this.table[_notIndexFilter] = true;
     return this;
   }
   async find() {
