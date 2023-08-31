@@ -231,6 +231,7 @@ async function getRecords(table, { filter, sorter, skip, limit, filterIndexes, r
   if (filterIndexes) {
     const records = [];
     const indexes = Object.keys(filterIndexes);
+    let singleIndex = false;
     for (let i = 0; i < indexes.length; i++) {
       const indexName = indexes[i];
       const isUnique = table.indexes[indexName];
@@ -246,7 +247,7 @@ async function getRecords(table, { filter, sorter, skip, limit, filterIndexes, r
               resolve(request.result);
             };
           });
-        } else if (isUnique && value && typeof value !== "function" && typeof value[_filter2] !== "function") {
+        } else if (isUnique && value && typeof value !== "function" && typeof value[_filter2] !== "function" && !(value instanceof RegExp)) {
           return new Promise((resolve, reject) => {
             const request = objectStore.index(indexName).get(value);
             request.onerror = function() {
@@ -256,7 +257,7 @@ async function getRecords(table, { filter, sorter, skip, limit, filterIndexes, r
               resolve(request.result);
             };
           });
-        } else if (value && typeof value !== "function" && typeof value[_filter2] !== "function") {
+        } else if (value && typeof value !== "function" && typeof value[_filter2] !== "function" && !(value instanceof RegExp)) {
           return new Promise((resolve, reject) => {
             const request = objectStore.index(indexName).openCursor(IDBKeyRange.only(value));
             const records2 = [];
@@ -299,7 +300,11 @@ async function getRecords(table, { filter, sorter, skip, limit, filterIndexes, r
             if (order === -1 || order === "desc")
               direction = "prev";
             if (indexes.length === 1 && indexValues.length === 1) {
-              sorter = null;
+              singleIndex = true;
+              const keys = Object.keys(rawSorter);
+              if (keys.length === 1 && keys[0] === indexName) {
+                sorter = null;
+              }
             }
           }
           return new Promise((resolve, reject) => {
@@ -311,8 +316,14 @@ async function getRecords(table, { filter, sorter, skip, limit, filterIndexes, r
             request.onsuccess = function() {
               const cursor = request.result;
               if (cursor) {
-                records2.push(cursor.value);
-                cursor.continue();
+                if (filter(cursor.value)) {
+                  records2.push(cursor.value);
+                }
+                if (singleIndex && !sorter && records2.length === skip + limit) {
+                  resolve(records2);
+                } else {
+                  cursor.continue();
+                }
               } else {
                 resolve(records2);
               }
@@ -322,6 +333,11 @@ async function getRecords(table, { filter, sorter, skip, limit, filterIndexes, r
       }));
       records.push(...ret2.flat());
     }
+    if (singleIndex) {
+      if (sorter)
+        records.sort(sorter);
+      return records.slice(skip, skip + limit);
+    }
     const ret = [];
     const ids = /* @__PURE__ */ new Set();
     for (let i = 0; i < records.length; i++) {
@@ -330,13 +346,13 @@ async function getRecords(table, { filter, sorter, skip, limit, filterIndexes, r
         continue;
       ids.add(record._id);
       ret.push(record);
-      if (!sorter && (skip > 0 || limit > 0) && ret.length >= skip + limit) {
+      if (!sorter && (skip > 0 || Number.isFinite(limit)) && ret.length >= skip + limit) {
         return ret.slice(skip, skip + limit);
       }
     }
     if (sorter)
       ret.sort(sorter);
-    if (skip > 0 || limit > 0) {
+    if (skip > 0 || Number.isFinite(limit)) {
       return ret.slice(skip, skip + limit);
     }
     return ret;
@@ -359,8 +375,10 @@ async function getRecords(table, { filter, sorter, skip, limit, filterIndexes, r
             request.onsuccess = function() {
               const cursor = request.result;
               if (cursor) {
-                records3.push(cursor.value);
-                if ((skip > 0 || limit > 0) && records3.length >= skip + limit) {
+                if (filter(cursor.value)) {
+                  records3.push(cursor.value);
+                }
+                if (records3.length === skip + limit) {
                   resolve(records3);
                 } else {
                   cursor.continue();
@@ -370,7 +388,7 @@ async function getRecords(table, { filter, sorter, skip, limit, filterIndexes, r
               }
             };
           });
-          return records2;
+          return records2.slice(skip, skip + limit);
         }
       }
     }
@@ -394,7 +412,7 @@ async function getRecords(table, { filter, sorter, skip, limit, filterIndexes, r
     }
     if (sorter)
       filtedRecords.sort(sorter);
-    if (skip > 0 || limit > 0) {
+    if (skip > 0 || Number.isFinite(limit)) {
       filtedRecords = filtedRecords.slice(skip, skip + limit);
     }
     return filtedRecords;
@@ -485,7 +503,7 @@ var query_default = class {
   #sorter = null;
   #rawSorter;
   #skip = 0;
-  #limit = 0;
+  #limit = Infinity;
   #projection = null;
   #updateFields = null;
   #insertFields = null;
@@ -560,7 +578,7 @@ var query_default = class {
       filter: this.#filter,
       sorter: this.#sorter,
       rawSorter: this.#rawSorter,
-      skip: 0,
+      skip: this.#skip,
       limit: 1,
       filterIndexes: this.filterIndexes
     });

@@ -12,7 +12,7 @@
       return from + Math.random() * (to - from);
     }
     const db = new AirDB({version: 2});
-    const table = db.table('person', {indexes: {name : true, score: false}});
+    const table = db.table('person', {indexes: {score: false}});
     console.log(table);
 
     // const table2 = db.table('person2');
@@ -27,16 +27,32 @@
     //   await table.save(data);
     // }
 
-    const students = await table.where()
-      .sort({createdAt: 'desc'})
-      .limit(5)
-      .find();
-    console.log(students);
+    // const students = await table.where()
+    //   .sort({createdAt: 'desc'})
+    //   .limit(5)
+    //   .find();
+    // console.log(students);
 
-    const res = await table.where({_id: students[0]._id})
-      .or({_id: students[1]._id}, {name: 'student4'}, {score: db.gt(80).lt(90)})
+    // const res = await table.where({_id: students[0]._id})
+    //   .or({_id: students[1]._id}, {name: 'student4'}, {score: db.gt(80).lt(90)})
+    //   .skip(1)
+    //   .find();
+    // console.log(res);
+
+    const res2 = await table.where({score: db.gt(70).lt(90), name: /^student[1-6]/})
+      .skip(1)
+      // .limit(3)
+      // .sort({score: 'desc'})
+      .sort({score: 'desc'})
       .find();
-    console.log(res);
+    console.log(res2);
+
+    const res3 = await table.where({name: /^student[7-9]/})
+      // .skip(2)
+      // .limit(3)
+      .sort({score: 'desc'})
+      .find();
+    console.log(res3);
   </script>
 </body>
 </html>
