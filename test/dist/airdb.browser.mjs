@@ -226,7 +226,7 @@ async function fileSync() {
 }
 async function flushData() {
 }
-async function getRecords(table, { filter, sorter, skip, limit, filterIndexes } = {}) {
+async function getRecords(table, { filter, sorter, skip, limit, filterIndexes, rawSorter } = {}) {
   const objectStore = table._storage.transaction();
   if (filterIndexes) {
     const records = [];
@@ -246,7 +246,7 @@ async function getRecords(table, { filter, sorter, skip, limit, filterIndexes } 
               resolve(request.result);
             };
           });
-        } else if (isUnique && value && !value[Symbol.for("index-range")]) {
+        } else if (isUnique && value && typeof value !== "function" && typeof value[_filter2] !== "function") {
           return new Promise((resolve, reject) => {
             const request = objectStore.index(indexName).get(value);
             request.onerror = function() {
@@ -256,7 +256,7 @@ async function getRecords(table, { filter, sorter, skip, limit, filterIndexes } 
               resolve(request.result);
             };
           });
-        } else if (value && !value[Symbol.for("index-range")]) {
+        } else if (value && typeof value !== "function" && typeof value[_filter2] !== "function") {
           return new Promise((resolve, reject) => {
             const request = objectStore.index(indexName).openCursor(IDBKeyRange.only(value));
             const records2 = [];
@@ -274,16 +274,24 @@ async function getRecords(table, { filter, sorter, skip, limit, filterIndexes } 
             };
           });
         } else {
-          const type = value[Symbol.for("index-range")];
+          const type = value._type;
           let range = null;
           if (type === "gt") {
-            range = IDBKeyRange.lowerBound(value.value, true);
+            range = IDBKeyRange.lowerBound(value._value, true);
           } else if (type === "gte") {
-            range = IDBKeyRange.lowerBound(value.value);
+            range = IDBKeyRange.lowerBound(value._value);
           } else if (type === "lt") {
-            range = IDBKeyRange.upperBound(value.value, true);
+            range = IDBKeyRange.upperBound(value._value, true);
           } else if (type === "lte") {
-            range = IDBKeyRange.upperBound(value.value);
+            range = IDBKeyRange.upperBound(value._value);
+          } else if (type === "gtlt") {
+            range = IDBKeyRange.bound(...value._value, true, true);
+          } else if (type === "gtlte") {
+            range = IDBKeyRange.bound(...value._value, true, false);
+          } else if (type === "gtelt") {
+            range = IDBKeyRange.bound(...value._value, false, true);
+          } else if (type === "gtelte") {
+            range = IDBKeyRange.bound(...value._value, false, false);
           }
           return new Promise((resolve, reject) => {
             const request = objectStore.index(indexName).openCursor(range);
@@ -324,8 +332,41 @@ async function getRecords(table, { filter, sorter, skip, limit, filterIndexes } 
     }
     return ret;
   } else {
+    if (rawSorter) {
+      const keys = Object.keys(rawSorter);
+      if (keys.length === 1) {
+        const key = keys[0];
+        const order = rawSorter[key];
+        if (table.indexes[key] != null) {
+          let direction = "next";
+          if (order === -1 || order === "desc")
+            direction = "prev";
+          const records2 = await new Promise((resolve, reject) => {
+            const request = objectStore.index(key).openCursor(null, direction);
+            const records3 = [];
+            request.onerror = function() {
+              reject(new Error(request));
+            };
+            request.onsuccess = function() {
+              const cursor = request.result;
+              if (cursor) {
+                records3.push(cursor.value);
+                if ((skip > 0 || limit > 0) && records3.length >= skip + limit) {
+                  resolve(records3);
+                } else {
+                  cursor.continue();
+                }
+              } else {
+                resolve(records3);
+              }
+            };
+          });
+          return records2;
+        }
+      }
+    }
     const records = await new Promise((resolve, reject) => {
-      const request = objectStore.getAll();
+      const request = objectStore.index("createdAt").getAll();
       request.onerror = function() {
         reject(new Error(request));
       };
@@ -350,11 +391,12 @@ async function getRecords(table, { filter, sorter, skip, limit, filterIndexes } 
     return filtedRecords;
   }
 }
-var dbInstances, version;
+var dbInstances, _filter2, version;
 var init_browser = __esm({
   "lib/platform/browser/index.js"() {
     init_storage();
     dbInstances = {};
+    _filter2 = Symbol.for("airdb-filter");
     version = 0;
   }
 });
@@ -367,6 +409,9 @@ function parseCondition(condition = {}) {
   for (const [k, v] of Object.entries(condition)) {
     if (typeof v === "function") {
       filters.push((d) => v(d[k], k, d));
+    } else if (v && typeof v[Symbol.for("airdb-filter")] === "function") {
+      const f = v[Symbol.for("airdb-filter")];
+      filters.push((d) => f(d[k], k, d));
     } else if (v instanceof RegExp) {
       filters.push((d) => d[k].match(v) != null);
     } else {
@@ -412,10 +457,7 @@ function updateFilterIndex(query, conditions, filterIndexes = {}, phase = "and")
       if (k in indexes) {
         hasIndex = true;
         filterIndexes[k] = filterIndexes[k] || /* @__PURE__ */ new Set();
-        if (!(typeof v === "function"))
-          filterIndexes[k].add(v);
-        else if (v._type)
-          filterIndexes[k].add({ [Symbol.for("index-range")]: v._type, value: v._value });
+        filterIndexes[k].add(v);
         if (phase === "and" && filterIndexes[k].size > 1)
           filterIndexes[k].clear();
       }
@@ -426,11 +468,13 @@ function updateFilterIndex(query, conditions, filterIndexes = {}, phase = "and")
   }
   return filterIndexes;
 }
+var _filter = Symbol.for("airdb-filter");
 var query_default = class {
   #table;
   #filter;
   #records;
   #sorter = null;
+  #rawSorter;
   #skip = 0;
   #limit = 0;
   #projection = null;
@@ -477,6 +521,7 @@ var query_default = class {
     let filtedRecords = await this.#table.getRecords({
       filter: this.#filter,
       sorter: this.#sorter,
+      rawSorter: this.#rawSorter,
       skip: this.#skip,
       limit: this.#limit,
       filterIndexes: this.filterIndexes
@@ -505,6 +550,7 @@ var query_default = class {
     const records = await this.#table.getRecords({
       filter: this.#filter,
       sorter: this.#sorter,
+      rawSorter: this.#rawSorter,
       skip: 0,
       limit: 1,
       filterIndexes: this.filterIndexes
@@ -548,12 +594,15 @@ var query_default = class {
       if (records.length <= 0 && this.#upsert) {
         records = Object.assign({}, this.#insertFields, this.#setOnInsertFields);
         for (const [k, v] of Object.entries(records)) {
-          if (typeof v === "function")
+          if (typeof v === "function" || v && typeof v[_filter] === "function")
             delete records[k];
         }
         if (this.#updateFields) {
           const updateFields = this.#updateFields;
-          for (const [k, v] of Object.entries(updateFields)) {
+          for (let [k, v] of Object.entries(updateFields)) {
+            if (v && v[_filter] === "function") {
+              v = v[_filter];
+            }
             if (typeof v !== "function") {
               records[k] = v;
             } else {
@@ -567,7 +616,10 @@ var query_default = class {
         const updateFields = this.#updateFields;
         records = records.map((record) => {
           const ret = { ...record };
-          for (const [k, v] of Object.entries(updateFields)) {
+          for (let [k, v] of Object.entries(updateFields)) {
+            if (v && v[_filter] === "function") {
+              v = v[_filter];
+            }
             if (typeof v !== "function") {
               ret[k] = v;
             } else {
@@ -593,6 +645,7 @@ var query_default = class {
   }
   sort(conditions) {
     const conds = Object.entries(conditions);
+    this.#rawSorter = conditions;
     this.#sorter = (a, b) => {
       for (let [k, v] of conds) {
         if (typeof v === "string") {
@@ -737,9 +790,9 @@ var Table = await (async () => {
     get name() {
       return this.#name;
     }
-    async getRecords({ filter, sorter, skip, limit, filterIndexes } = {}) {
+    async getRecords({ filter, sorter, skip, limit, filterIndexes, rawSorter } = {}) {
       await this.#ready;
-      return getRecords2(this, { filter, sorter, skip, limit, filterIndexes });
+      return getRecords2(this, { filter, sorter, skip, limit, filterIndexes, rawSorter });
     }
     async save(records = [], countResult = false) {
       await this.#ready;
@@ -799,201 +852,233 @@ var Table = await (async () => {
 var table_default = Table;
 
 // lib/operator.js
-var operator_default = class {
+var _filter3 = Symbol.for("airdb-filter");
+var Operator = class _Operator {
+  constructor(filter, prev) {
+    if (filter && prev) {
+      this[_filter3] = this.and(prev, filter)[_filter3];
+    } else if (filter) {
+      this[_filter3] = filter;
+    }
+  }
   gt(value) {
     const fn = (d) => d > value;
-    fn._type = "gt";
-    fn._value = value;
-    return fn;
+    const ret = new _Operator(fn, this[_filter3]);
+    if (!this[_filter3]) {
+      ret._type = "gt";
+      ret._value = value;
+    } else if (this._type === "lt" || this._type === "lte") {
+      ret._type = `gt${this._type}`;
+      ret._value = [value, this._value];
+    }
+    return ret;
   }
   greaterThan(value) {
     return this.gt(value);
   }
   gte(value) {
     const fn = (d) => d >= value;
-    fn._type = "gte";
-    fn._value = value;
-    return fn;
+    const ret = new _Operator(fn, this[_filter3]);
+    if (!this[_filter3]) {
+      ret._type = "gte";
+      ret._value = value;
+    } else if (this._type === "lt" || this._type === "lte") {
+      ret._type = `gte${this._type}`;
+      ret._value = [value, this._value];
+    }
+    return ret;
   }
   greaterThanOrEqual(value) {
     return this.gte(value);
   }
   lt(value) {
     const fn = (d) => d < value;
-    fn._type = "lt";
-    fn._value = value;
-    return fn;
+    const ret = new _Operator(fn, this[_filter3]);
+    if (!this[_filter3]) {
+      ret._type = "lt";
+      ret._value = value;
+    } else if (this._type === "gt" || this._type === "gte") {
+      ret._type = `${this._type}lt`;
+      ret._value = [this._value, value];
+    }
+    return ret;
   }
   lessThan(value) {
     return this.lt(value);
   }
   lte(value) {
     const fn = (d) => d <= value;
-    fn._type = "lte";
-    fn._value = value;
-    return fn;
+    const ret = new _Operator(fn, this[_filter3]);
+    if (!this[_filter3]) {
+      ret._type = "lte";
+      ret._value = value;
+    } else if (this._type === "gt" || this._type === "gte") {
+      ret._type = `${this._type}lte`;
+      ret._value = [this._value, value];
+    }
+    return ret;
   }
   lessThanOrEqual(value) {
     return this.lte(value);
   }
   eq(value) {
-    return (d) => d == value;
+    return new _Operator((d) => d == value, this[_filter3]);
   }
   equal(value) {
-    return (d) => d == value;
+    return new _Operator((d) => d == value, this[_filter3]);
   }
   ne(value) {
-    return (d) => d != value;
+    return new _Operator((d) => d != value, this[_filter3]);
   }
   notEqual(value) {
-    return (d) => d != value;
+    return new _Operator((d) => d != value, this[_filter3]);
   }
   mod(divisor, remainder) {
-    return (d) => d % divisor === remainder;
+    return new _Operator((d) => d % divisor === remainder, this[_filter3]);
   }
   in(list) {
-    return (d) => {
+    return new _Operator((d) => {
       if (Array.isArray(d)) {
         return d.some((item) => list.includes(item));
       }
       return list.includes(d);
-    };
+    }, this[_filter3]);
   }
   nin(list) {
-    return (d) => {
+    return new _Operator((d) => {
       if (Array.isArray(d)) {
         return !d.some((item) => list.includes(item));
       }
       return !list.includes(d);
-    };
+    }, this[_filter3]);
   }
   all(list) {
-    return (d) => {
+    return new _Operator((d) => {
       if (Array.isArray(d)) {
         return d.every((item) => list.includes(item));
       }
-    };
+    }, this[_filter3]);
   }
   size(len) {
-    return (d) => {
+    return new _Operator((d) => {
       if (Array.isArray(d)) {
         return d.length === len;
       }
-    };
+    }, this[_filter3]);
   }
   bitsAllClear(positions) {
-    return (d) => {
+    return new _Operator((d) => {
       if (typeof d === "number") {
         const mask = 0;
         positions.forEach((p) => mask | 1 << p);
         return d & mask === 0;
       }
-    };
+    }, this[_filter3]);
   }
   bitsAnyClear(positions) {
-    return (d) => {
+    return new _Operator((d) => {
       if (typeof d === "number") {
         const mask = 0;
         positions.forEach((p) => mask | 1 << p);
         return d & mask < mask;
       }
-    };
+    }, this[_filter3]);
   }
   bitsAllSet(positions) {
-    return (d) => {
+    return new _Operator((d) => {
       if (typeof d === "number") {
         const mask = 0;
         positions.forEach((p) => mask | 1 << p);
         return d & mask === mask;
       }
-    };
+    }, this[_filter3]);
   }
   bitsAnySet(positions) {
-    return (d) => {
+    return new _Operator((d) => {
       if (typeof d === "number") {
         const mask = 0;
         positions.forEach((p) => mask | 1 << p);
         return d & mask > 0;
       }
-    };
+    }, this[_filter3]);
   }
   elemMatch(conditions) {
-    const filter = typeof conditions === "function" ? conditions : mergeConditions(conditions);
-    return (d) => {
+    const filter = conditions instanceof _Operator || typeof conditions === "function" ? conditions : mergeConditions(conditions);
+    return new _Operator((d) => {
       if (Array.isArray(d)) {
         return d.some((item) => filter(item));
       }
-    };
+    }, this[_filter3]);
   }
   exists(flag) {
-    return (d, k, o) => k in o == flag;
+    return new _Operator((d, k, o) => k in o == flag, this[_filter3]);
   }
   type(t) {
-    return (d, k, o) => k in o && getType(d) === t;
+    return new _Operator((d, k, o) => k in o && getType(d) === t, this[_filter3]);
   }
   not(condition) {
-    return (d) => !condition(d);
+    return new _Operator((d) => !condition(d), this[_filter3]);
   }
-  and(conditions) {
-    return mergeConditions(conditions, "and");
+  and(...conditions) {
+    return new _Operator(mergeConditions(conditions, "and"), this[_filter3]);
   }
-  or(conditions) {
-    return mergeConditions(conditions, "or");
+  or(...conditions) {
+    return new _Operator(mergeConditions(conditions, "or"), this[_filter3]);
   }
-  nor(conditions) {
-    return mergeConditions(conditions, "nor");
+  nor(...conditions) {
+    return new _Operator(mergeConditions(conditions, "nor"), this[_filter3]);
   }
   inc(value) {
-    return (d) => {
+    return new _Operator((d) => {
       if (typeof d !== "number") {
         throw new Error("Cannot apply $inc to a value of non-numeric type.");
       }
       return d + value;
-    };
+    }, this[_filter3]);
   }
   mul(value) {
-    return (d) => {
+    return new _Operator((d) => {
       if (typeof d !== "number") {
         throw new Error("Cannot apply $inc to a value of non-numeric type.");
       }
       return d * value;
-    };
+    }, this[_filter3]);
   }
   min(value) {
-    return (d) => {
+    return new _Operator((d) => {
       if (typeof d !== "number") {
         throw new Error("Cannot apply $inc to a value of non-numeric type.");
       }
       return Math.min(d, value);
-    };
+    }, this[_filter3]);
   }
   max(value) {
-    return (d) => {
+    return new _Operator((d) => {
       if (typeof d !== "number") {
         throw new Error("Cannot apply $inc to a value of non-numeric type.");
       }
       return Math.max(d, value);
-    };
+    }, this[_filter3]);
   }
   rename(newKey) {
-    return (d, k, o) => {
+    return new _Operator((d, k, o) => {
       if (newKey !== k) {
         o[newKey] = o[k];
       }
-    };
+    }, this[_filter3]);
   }
   unset() {
-    return () => {
+    return new _Operator(() => {
       return;
-    };
+    }, this[_filter3]);
   }
   currentDate() {
-    return () => /* @__PURE__ */ new Date();
+    return new _Operator(() => /* @__PURE__ */ new Date(), this[_filter3]);
   }
 };
 
 // lib/db.js
-var db_default = class extends operator_default {
+var db_default = class extends Operator {
   #root;
   #meta;
   #name;
