@@ -293,8 +293,17 @@ async function getRecords(table, { filter, sorter, skip, limit, filterIndexes, r
           } else if (type === "gtelte") {
             range = IDBKeyRange.bound(...value._value, false, false);
           }
+          let direction = "next";
+          if (rawSorter) {
+            const order = rawSorter[indexName];
+            if (order === -1 || order === "desc")
+              direction = "prev";
+            if (indexes.length === 1 && indexValues.length === 1) {
+              sorter = null;
+            }
+          }
           return new Promise((resolve, reject) => {
-            const request = objectStore.index(indexName).openCursor(range);
+            const request = objectStore.index(indexName).openCursor(range, direction);
             const records2 = [];
             request.onerror = function() {
               reject(new Error(request));
@@ -1029,51 +1038,64 @@ var Operator = class _Operator {
     return new _Operator(mergeConditions(conditions, "nor"), this[_filter3]);
   }
   inc(value) {
+    const filter = this[_filter3];
     return new _Operator((d) => {
+      if (filter)
+        d = filter(d);
       if (typeof d !== "number") {
         throw new Error("Cannot apply $inc to a value of non-numeric type.");
       }
       return d + value;
-    }, this[_filter3]);
+    });
   }
   mul(value) {
+    const filter = this[_filter3];
     return new _Operator((d) => {
+      if (filter)
+        d = filter(d);
       if (typeof d !== "number") {
         throw new Error("Cannot apply $inc to a value of non-numeric type.");
       }
       return d * value;
-    }, this[_filter3]);
+    });
   }
   min(value) {
+    const filter = this[_filter3];
     return new _Operator((d) => {
+      if (filter)
+        d = filter(d);
       if (typeof d !== "number") {
         throw new Error("Cannot apply $inc to a value of non-numeric type.");
       }
       return Math.min(d, value);
-    }, this[_filter3]);
+    });
   }
   max(value) {
+    const filter = this[_filter3];
     return new _Operator((d) => {
+      if (filter)
+        d = filter(d);
       if (typeof d !== "number") {
         throw new Error("Cannot apply $inc to a value of non-numeric type.");
       }
       return Math.max(d, value);
-    }, this[_filter3]);
+    });
   }
   rename(newKey) {
     return new _Operator((d, k, o) => {
       if (newKey !== k) {
         o[newKey] = o[k];
       }
-    }, this[_filter3]);
+      return;
+    });
   }
   unset() {
     return new _Operator(() => {
       return;
-    }, this[_filter3]);
+    });
   }
   currentDate() {
-    return new _Operator(() => /* @__PURE__ */ new Date(), this[_filter3]);
+    return new _Operator(() => /* @__PURE__ */ new Date());
   }
 };
 
