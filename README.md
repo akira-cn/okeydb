@@ -65,7 +65,7 @@ Pure JavaScript NoSQL database with no dependency. IndexedDB, Flat file, JSON ba
 ### In Node.js
 
 ```js
-import OkeyDB from 'okeydb';
+import {OkeyDB} from 'okeydb';
 
 const db = new OkeyDB();
 const personTable = db.table('person');
