@@ -1,4 +1,4 @@
-export function* pollItem(array) {
+function* pollItem(array) {
   let current = 0;
   while(true) {
     yield array[current++ % array.length];

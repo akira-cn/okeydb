@@ -53,7 +53,7 @@ var init_storage = __esm({
         const promises = [];
         for (const id of Object.keys(deleteMap)) {
           promises.push(new Promise((resolve, reject) => {
-            const request = this.transition("readwrite").delete(id);
+            const request = this.transaction("readwrite").delete(id);
             request.onsuccess = function() {
               resolve(request.result);
             };
@@ -220,6 +220,7 @@ async function createTable(table) {
     });
   }
   const db = dbInstances[tableName];
+  table.database.instance = db;
   return new Storage({ db, tableName });
 }
 async function fileSync() {
@@ -248,7 +249,7 @@ async function getRecords(table, { filter, sorter, skip, limit, filterIndexes, r
               resolve(request.result);
             };
           });
-        } else if (isUnique && value && typeof value !== "function" && typeof value[_filter2] !== "function" && !(value instanceof RegExp)) {
+        } else if (isUnique && value && typeof value !== "function" && typeof value[_filter3] !== "function" && !(value instanceof RegExp)) {
           return new Promise((resolve, reject) => {
             const request = objectStore.index(indexName).get(value);
             request.onerror = function() {
@@ -258,7 +259,7 @@ async function getRecords(table, { filter, sorter, skip, limit, filterIndexes, r
               resolve(request.result);
             };
           });
-        } else if (value && typeof value !== "function" && typeof value[_filter2] !== "function" && !(value instanceof RegExp)) {
+        } else if (value && typeof value !== "function" && typeof value[_filter3] !== "function" && !(value instanceof RegExp)) {
           return new Promise((resolve, reject) => {
             const request = objectStore.index(indexName).openCursor(IDBKeyRange.only(value));
             const records2 = [];
@@ -447,30 +448,33 @@ async function getRecords(table, { filter, sorter, skip, limit, filterIndexes, r
     return filtedRecords;
   }
 }
-var dbInstances, _filter2, _notIndexFilter2, version;
+var dbInstances, _filter3, _notIndexFilter2, version;
 var init_browser = __esm({
   "lib/platform/browser/index.js"() {
     init_storage();
     dbInstances = {};
-    _filter2 = Symbol.for("airdb-filter");
+    _filter3 = Symbol.for("airdb-filter");
     _notIndexFilter2 = Symbol.for("not-index-filter");
     version = 0;
   }
 });
 
 // lib/utils.js
+var _filter = Symbol.for("airdb-filter");
 function parseCondition(condition = {}) {
   if (typeof condition === "function")
     return condition;
+  if (condition[_filter])
+    return condition[_filter];
   const filters = [];
   for (const [k, v] of Object.entries(condition)) {
     if (typeof v === "function") {
       filters.push((d) => v(d[k], k, d));
-    } else if (v && typeof v[Symbol.for("airdb-filter")] === "function") {
-      const f = v[Symbol.for("airdb-filter")];
+    } else if (v && typeof v[_filter] === "function") {
+      const f = v[_filter];
       filters.push((d) => f(d[k], k, d));
     } else if (v instanceof RegExp) {
-      filters.push((d) => d[k].match(v) != null);
+      filters.push((d) => d[k] && typeof d[k].match === "function" && d[k].match(v) != null);
     } else {
       filters.push((d) => d[k] === v);
     }
@@ -531,7 +535,7 @@ function updateFilterIndex(query, conditions, filterIndexes = {}, phase = "and")
   query.table[_notIndexFilter] = notIndexFilter;
   return filterIndexes;
 }
-var _filter = Symbol.for("airdb-filter");
+var _filter2 = Symbol.for("airdb-filter");
 var query_default = class {
   #table;
   #filter;
@@ -542,20 +546,26 @@ var query_default = class {
   #limit = Infinity;
   #projection = null;
   #updateFields = null;
-  #insertFields = null;
+  #insertFields = {};
   #setOnInsertFields = null;
   #upsert = false;
   #filterIndexes = {};
   constructor(condition, table) {
-    this.#filter = mergeConditions([condition]);
     this.#table = table;
-    this.#insertFields = { ...condition };
-    this.#filterIndexes = updateFilterIndex(this, [condition], {}, "and");
+    if (condition) {
+      this.#filter = mergeConditions([condition]);
+      this.#insertFields = { ...condition };
+      this.#filterIndexes = updateFilterIndex(this, [condition], {}, "and");
+    }
   }
   and(...conditions) {
     const left = this.#filter;
     const right = mergeConditions(conditions);
-    this.#filter = (record) => left(record) && right(record);
+    if (left) {
+      this.#filter = (record) => left(record) && right(record);
+    } else {
+      this.#filter = right;
+    }
     for (let i = 0; i < conditions.length; i++) {
       Object.assign(this.#insertFields, conditions[i]);
     }
@@ -566,7 +576,11 @@ var query_default = class {
   or(...conditions) {
     const left = this.#filter;
     const right = mergeConditions(conditions, "or");
-    this.#filter = (record) => left(record) || right(record);
+    if (left) {
+      this.#filter = (record) => left(record) || right(record);
+    } else {
+      this.#filter = right;
+    }
     this.#insertFields = {};
     if (this.#filterIndexes)
       this.#filterIndexes = updateFilterIndex(this, conditions, this.#filterIndexes, "or");
@@ -574,8 +588,12 @@ var query_default = class {
   }
   nor(...conditions) {
     const left = this.#filter;
-    const right = mergeConditions(conditions, "nor");
-    this.#filter = (record) => !(left(record) || right(record));
+    const right = mergeConditions(conditions, "or");
+    if (left) {
+      this.#filter = (record) => !(left(record) || right(record));
+    } else {
+      this.#filter = (record) => !right(record);
+    }
     this.#insertFields = {};
     this.#filterIndexes = null;
     this.table[_notIndexFilter] = true;
@@ -583,7 +601,9 @@ var query_default = class {
   }
   async find() {
     let filtedRecords = await this.#table.getRecords({
-      filter: this.#filter,
+      filter: this.#filter || function() {
+        return true;
+      },
       sorter: this.#sorter,
       rawSorter: this.#rawSorter,
       skip: this.#skip,
@@ -612,7 +632,9 @@ var query_default = class {
   }
   async findOne() {
     const records = await this.#table.getRecords({
-      filter: this.#filter,
+      filter: this.#filter || function() {
+        return true;
+      },
       sorter: this.#sorter,
       rawSorter: this.#rawSorter,
       skip: this.#skip,
@@ -657,15 +679,19 @@ var query_default = class {
         records = await this.find();
       if (records.length <= 0 && this.#upsert) {
         records = Object.assign({}, this.#insertFields, this.#setOnInsertFields);
-        for (const [k, v] of Object.entries(records)) {
-          if (typeof v === "function" || v && typeof v[_filter] === "function")
-            delete records[k];
+        for (let [k, v] of Object.entries(records)) {
+          if (v && typeof v[_filter2] === "function") {
+            v = v[_filter2];
+          }
+          if (typeof v === "function") {
+            records[k] = v(records[k], k, records);
+          }
         }
         if (this.#updateFields) {
           const updateFields = this.#updateFields;
           for (let [k, v] of Object.entries(updateFields)) {
-            if (v && v[_filter] === "function") {
-              v = v[_filter];
+            if (v && typeof v[_filter2] === "function") {
+              v = v[_filter2];
             }
             if (typeof v !== "function") {
               records[k] = v;
@@ -681,8 +707,8 @@ var query_default = class {
         records = records.map((record) => {
           const ret = { ...record };
           for (let [k, v] of Object.entries(updateFields)) {
-            if (v && v[_filter] === "function") {
-              v = v[_filter];
+            if (v && typeof v[_filter2] === "function") {
+              v = v[_filter2];
             }
             if (typeof v !== "function") {
               ret[k] = v;
@@ -907,7 +933,7 @@ var Table = await (async () => {
       await fileSync2(this);
       return { deletedCount };
     }
-    where(condition = {}) {
+    where(condition = null) {
       const query = new query_default(condition, this);
       return query;
     }
@@ -916,19 +942,19 @@ var Table = await (async () => {
 var table_default = Table;
 
 // lib/operator.js
-var _filter3 = Symbol.for("airdb-filter");
+var _filter4 = Symbol.for("airdb-filter");
 var Operator = class _Operator {
   constructor(filter, prev) {
     if (filter && prev) {
-      this[_filter3] = this.and(prev, filter)[_filter3];
+      this[_filter4] = this.and(prev, filter)[_filter4];
     } else if (filter) {
-      this[_filter3] = filter;
+      this[_filter4] = filter;
     }
   }
   gt(value) {
     const fn = (d) => d > value;
-    const ret = new _Operator(fn, this[_filter3]);
-    if (!this[_filter3]) {
+    const ret = new _Operator(fn, this[_filter4]);
+    if (!this[_filter4]) {
       ret._type = "gt";
       ret._value = value;
     } else if (this._type === "lt" || this._type === "lte") {
@@ -942,8 +968,8 @@ var Operator = class _Operator {
   }
   gte(value) {
     const fn = (d) => d >= value;
-    const ret = new _Operator(fn, this[_filter3]);
-    if (!this[_filter3]) {
+    const ret = new _Operator(fn, this[_filter4]);
+    if (!this[_filter4]) {
       ret._type = "gte";
       ret._value = value;
     } else if (this._type === "lt" || this._type === "lte") {
@@ -957,8 +983,8 @@ var Operator = class _Operator {
   }
   lt(value) {
     const fn = (d) => d < value;
-    const ret = new _Operator(fn, this[_filter3]);
-    if (!this[_filter3]) {
+    const ret = new _Operator(fn, this[_filter4]);
+    if (!this[_filter4]) {
       ret._type = "lt";
       ret._value = value;
     } else if (this._type === "gt" || this._type === "gte") {
@@ -972,8 +998,8 @@ var Operator = class _Operator {
   }
   lte(value) {
     const fn = (d) => d <= value;
-    const ret = new _Operator(fn, this[_filter3]);
-    if (!this[_filter3]) {
+    const ret = new _Operator(fn, this[_filter4]);
+    if (!this[_filter4]) {
       ret._type = "lte";
       ret._value = value;
     } else if (this._type === "gt" || this._type === "gte") {
@@ -986,19 +1012,19 @@ var Operator = class _Operator {
     return this.lte(value);
   }
   eq(value) {
-    return new _Operator((d) => d == value, this[_filter3]);
+    return new _Operator((d) => d == value, this[_filter4]);
   }
   equal(value) {
-    return new _Operator((d) => d == value, this[_filter3]);
+    return new _Operator((d) => d == value, this[_filter4]);
   }
   ne(value) {
-    return new _Operator((d) => d != value, this[_filter3]);
+    return new _Operator((d) => d != value, this[_filter4]);
   }
   notEqual(value) {
-    return new _Operator((d) => d != value, this[_filter3]);
+    return new _Operator((d) => d != value, this[_filter4]);
   }
   mod(divisor, remainder) {
-    return new _Operator((d) => d % divisor === remainder, this[_filter3]);
+    return new _Operator((d) => d % divisor === remainder, this[_filter4]);
   }
   in(list) {
     return new _Operator((d) => {
@@ -1006,7 +1032,7 @@ var Operator = class _Operator {
         return d.some((item) => list.includes(item));
       }
       return list.includes(d);
-    }, this[_filter3]);
+    }, this[_filter4]);
   }
   nin(list) {
     return new _Operator((d) => {
@@ -1014,86 +1040,94 @@ var Operator = class _Operator {
         return !d.some((item) => list.includes(item));
       }
       return !list.includes(d);
-    }, this[_filter3]);
+    }, this[_filter4]);
   }
   all(list) {
     return new _Operator((d) => {
       if (Array.isArray(d)) {
         return d.every((item) => list.includes(item));
       }
-    }, this[_filter3]);
+    }, this[_filter4]);
   }
   size(len) {
     return new _Operator((d) => {
       if (Array.isArray(d)) {
         return d.length === len;
       }
-    }, this[_filter3]);
+    }, this[_filter4]);
   }
   bitsAllClear(positions) {
     return new _Operator((d) => {
       if (typeof d === "number") {
-        const mask = 0;
-        positions.forEach((p) => mask | 1 << p);
-        return d & mask === 0;
+        let mask = 0;
+        positions.forEach((p) => mask |= 1 << p);
+        return (d & mask) === 0;
       }
-    }, this[_filter3]);
+    }, this[_filter4]);
   }
   bitsAnyClear(positions) {
     return new _Operator((d) => {
       if (typeof d === "number") {
-        const mask = 0;
-        positions.forEach((p) => mask | 1 << p);
-        return d & mask < mask;
+        let mask = 0;
+        positions.forEach((p) => mask |= 1 << p);
+        return (d & mask) < mask;
       }
-    }, this[_filter3]);
+    }, this[_filter4]);
   }
   bitsAllSet(positions) {
     return new _Operator((d) => {
       if (typeof d === "number") {
-        const mask = 0;
-        positions.forEach((p) => mask | 1 << p);
-        return d & mask === mask;
+        let mask = 0;
+        positions.forEach((p) => mask |= 1 << p);
+        return (d & mask) === mask;
       }
-    }, this[_filter3]);
+    }, this[_filter4]);
   }
   bitsAnySet(positions) {
     return new _Operator((d) => {
       if (typeof d === "number") {
-        const mask = 0;
-        positions.forEach((p) => mask | 1 << p);
-        return d & mask > 0;
+        let mask = 0;
+        positions.forEach((p) => mask |= 1 << p);
+        return (d & mask) > 0;
       }
-    }, this[_filter3]);
+    }, this[_filter4]);
   }
   elemMatch(conditions) {
-    const filter = conditions instanceof _Operator || typeof conditions === "function" ? conditions : mergeConditions(conditions);
+    if (conditions instanceof _Operator) {
+      conditions = conditions[_filter4];
+    }
+    const filter = typeof conditions === "function" ? conditions : mergeConditions(conditions);
     return new _Operator((d) => {
       if (Array.isArray(d)) {
         return d.some((item) => filter(item));
       }
-    }, this[_filter3]);
+    }, this[_filter4]);
   }
   exists(flag) {
-    return new _Operator((d, k, o) => k in o == flag, this[_filter3]);
+    return new _Operator((d, k, o) => k in o == flag, this[_filter4]);
   }
   type(t) {
-    return new _Operator((d, k, o) => k in o && getType(d) === t, this[_filter3]);
+    return new _Operator((d, k, o) => k in o && getType(d) === t, this[_filter4]);
   }
   not(condition) {
-    return new _Operator((d) => !condition(d), this[_filter3]);
+    if (condition instanceof _Operator) {
+      condition = condition[_filter4];
+    } else if (typeof condition !== "function") {
+      condition = (d) => d === condition;
+    }
+    return new _Operator((d, k, o) => !condition(d, k, o), this[_filter4]);
   }
   and(...conditions) {
-    return new _Operator(mergeConditions(conditions, "and"), this[_filter3]);
+    return new _Operator(mergeConditions(conditions, "and"), this[_filter4]);
   }
   or(...conditions) {
-    return new _Operator(mergeConditions(conditions, "or"), this[_filter3]);
+    return new _Operator(mergeConditions(conditions, "or"), this[_filter4]);
   }
   nor(...conditions) {
-    return new _Operator(mergeConditions(conditions, "nor"), this[_filter3]);
+    return new _Operator(mergeConditions(conditions, "nor"), this[_filter4]);
   }
   inc(value) {
-    const filter = this[_filter3];
+    const filter = this[_filter4];
     return new _Operator((d) => {
       if (filter)
         d = filter(d);
@@ -1104,7 +1138,7 @@ var Operator = class _Operator {
     });
   }
   mul(value) {
-    const filter = this[_filter3];
+    const filter = this[_filter4];
     return new _Operator((d) => {
       if (filter)
         d = filter(d);
@@ -1115,7 +1149,7 @@ var Operator = class _Operator {
     });
   }
   min(value) {
-    const filter = this[_filter3];
+    const filter = this[_filter4];
     return new _Operator((d) => {
       if (filter)
         d = filter(d);
@@ -1126,7 +1160,7 @@ var Operator = class _Operator {
     });
   }
   max(value) {
-    const filter = this[_filter3];
+    const filter = this[_filter4];
     return new _Operator((d) => {
       if (filter)
         d = filter(d);
@@ -1152,6 +1186,12 @@ var Operator = class _Operator {
   currentDate() {
     return new _Operator(() => /* @__PURE__ */ new Date());
   }
+  regex(value) {
+    return new _Operator((d) => {
+      const exp = new RegExp(value);
+      return d.match(exp) != null;
+    });
+  }
 };
 
 // lib/db.js
@@ -1173,6 +1213,10 @@ var db_default = class extends Operator {
   }
   get version() {
     return this.#version;
+  }
+  close() {
+    if (this.instance)
+      this.instance.close();
   }
   table(name, { indexes } = {}) {
     if (!this.#tables[name])
