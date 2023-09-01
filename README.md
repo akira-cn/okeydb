@@ -28,7 +28,7 @@ Pure JavaScript NoSQL database with no dependency. IndexedDB, Flat file, JSON ba
 </head>
 <body>
   <script type="module">
-    import { OkeyDB } from 'https://unpkg.com/okeydb@0.1.0/dist/okeydb.browser.mjs';
+    import { OkeyDB } from 'https://unpkg.com/okeydb/dist/okeydb.browser.mjs';
 
     function* pollItem(array) {
       let current = 0;
