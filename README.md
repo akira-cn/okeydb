@@ -1,14 +1,16 @@
-# AirDB Lite
+# AirDB
 
-Airdb-lite is a light-weight document oriented NoSQL database based on local file-system.
+Airdb is a light-weight document oriented NoSQL database based on local file-system and [IndexedDB](https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API).
 
-Pure JavaScript NoSQL database with no dependency. Flat file, JSON based document database, written by node.js.
+Pure JavaScript NoSQL database with no dependency. IndexedDB, Flat file, JSON based document database, running in Web Browser and Node.js.
 
 **Its api is compatible with the [aircode database API](https://docs.aircode.io/reference/server/database-api).**
 
 ## Features
 
-- Use JSON file storage, no need to install any database.
+- Available in Web Browser and Node.js.
+- Use IndexedDB in Web Browser.
+- Use JSON file storage in Node.js, no need to install any database.
 - A convenient and easy-to-use chained API that returns Promises.
 - Powerful combined conditional queries.
 
@@ -116,18 +118,10 @@ console.log(result);
 
 ## Limits
 
-- **Due to the following reasons, it is NOT recommended for use in a production environment:**
+You can use AirDB in your web app as client database. 
+
+- **But due to the following reasons, it is NOT recommended for use in a Node.js production environment:**
   - This is just a single-instance text database and does not have the ability to scale across multiple servers.
   - Without using schema constraints and indexes(not implemented yet), the storage performance is limited by the usage of JSON.parse and JSON.stringify. Additionally, the query efficiency is limited by the size of the data.  
 
 If you want to deploy your code to a production environment, you can seamlessly migrate to [AirCode](https://aircode.io/) and use `aircode.db`.
-
-
-## TODO
-
-- Table-schema (in [dbpath]/table.meta)
-  - Specifying field types can be used to serialize records in a fast way rather than use JSON.stringify.
-- Indexes (in [dbpath]/table.meta)
-  - Create and use indexes to fastify data querys.
-- Add unit tests
-- Add benchmarks

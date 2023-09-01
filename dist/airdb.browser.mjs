@@ -1,48 +1,56 @@
-var __create = Object.create;
 var __defProp = Object.defineProperty;
-var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
 var __getOwnPropNames = Object.getOwnPropertyNames;
-var __getProtoOf = Object.getPrototypeOf;
-var __hasOwnProp = Object.prototype.hasOwnProperty;
+var __esm = (fn, res) => function __init() {
+  return fn && (res = (0, fn[__getOwnPropNames(fn)[0]])(fn = 0)), res;
+};
 var __export = (target, all) => {
   for (var name in all)
     __defProp(target, name, { get: all[name], enumerable: true });
 };
-var __copyProps = (to, from, except, desc) => {
-  if (from && typeof from === "object" || typeof from === "function") {
-    for (let key of __getOwnPropNames(from))
-      if (!__hasOwnProp.call(to, key) && key !== except)
-        __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });
-  }
-  return to;
-};
-var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
-  // If the importer is in node compatibility mode or this is not an ESM
-  // file that has been converted to a CommonJS file using a Babel-
-  // compatible transform (i.e. "__esModule" has not been set), then set
-  // "default" to the CommonJS "module.exports" for node compatibility.
-  isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
-  mod
-));
-var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// index.js
-var airdb_lite_exports = {};
-__export(airdb_lite_exports, {
-  default: () => airdb_lite_default
+// lib/platform/browser/index.js
+var browser_exports = {};
+__export(browser_exports, {
+  createTable: () => createTable,
+  fileSync: () => fileSync,
+  flushData: () => flushData,
+  getRecords: () => getRecords
 });
-module.exports = __toCommonJS(airdb_lite_exports);
-
-// lib/table.js
-var import_node_path = __toESM(require("node:path"), 1);
-var import_node_fs = require("node:fs");
-var import_promises = require("node:fs/promises");
+async function createTable(table) {
+  const dbName = table.database.name;
+  if (!dbInstances[dbName]) {
+    dbInstances[dbName] = await new Promise((resolve, reject) => {
+      const request = window.indexedDB.open(dbName);
+      request.onerror = function() {
+        reject(new Error("Datebase error."));
+      };
+      request.onsuccess = function() {
+        resolve(request.result);
+      };
+    });
+  }
+  const db = dbInstances[dbName];
+  const tableName = table.name;
+  if (!db.objectStoreNames.contains(tableName)) {
+    db.createObjectStore(tableName, { keyPath: "_id" });
+  }
+  return new Storage({ db, tableName });
+}
+async function fileSync() {
+}
+async function flushData() {
+}
+async function getRecords(table, { filter, sorter, skip, limit, indexes } = {}) {
+  const db = table._storage.db;
+}
+var dbInstances;
+var init_browser = __esm({
+  "lib/platform/browser/index.js"() {
+    dbInstances = {};
+  }
+});
 
 // lib/utils.js
-var import_node_crypto = require("node:crypto");
-function generateID() {
-  return (0, import_node_crypto.randomUUID)({ disableEntropyCache: true });
-}
 function parseCondition(condition = {}) {
   if (typeof condition === "function")
     return condition;
@@ -84,11 +92,29 @@ function getType(value) {
   }
   return type;
 }
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 // lib/query.js
+function updateFilterIndex(query, conditions, filterIndexes = {}, phase = "and") {
+  const indexes = query.table.indexes;
+  for (let i = 0; i < conditions.length; i++) {
+    const condition = conditions[i];
+    let hasIndex = false;
+    for (const [k, v] of Object.entries(condition)) {
+      if (k in indexes) {
+        hasIndex = true;
+        filterIndexes[k] = filterIndexes[k] || /* @__PURE__ */ new Set();
+        if (!(typeof v === "function"))
+          filterIndexes[k].add(v);
+        if (phase === "and" && filterIndexes[k].size > 1)
+          filterIndexes[k].clear();
+      }
+    }
+    if (!hasIndex && phase === "or") {
+      return null;
+    }
+  }
+  return filterIndexes;
+}
 var query_default = class {
   #table;
   #filter;
@@ -101,10 +127,12 @@ var query_default = class {
   #insertFields = null;
   #setOnInsertFields = null;
   #upsert = false;
-  constructor(conditions, table) {
-    this.#filter = mergeConditions([conditions]);
+  #filterIndexes = {};
+  constructor(condition, table) {
+    this.#filter = mergeConditions([condition]);
     this.#table = table;
-    this.#insertFields = { ...conditions };
+    this.#insertFields = { ...condition };
+    this.#filterIndexes = updateFilterIndex(this, [condition], {}, "and");
   }
   and(...conditions) {
     const left = this.#filter;
@@ -113,6 +141,8 @@ var query_default = class {
     for (let i = 0; i < conditions.length; i++) {
       Object.assign(this.#insertFields, conditions[i]);
     }
+    if (this.#filterIndexes)
+      this.#filterIndexes = updateFilterIndex(this, conditions, this.#filterIndexes, "and");
     return this;
   }
   or(...conditions) {
@@ -120,6 +150,8 @@ var query_default = class {
     const right = mergeConditions(conditions, "or");
     this.#filter = (record) => left(record) || right(record);
     this.#insertFields = {};
+    if (this.#filterIndexes)
+      this.#filterIndexes = updateFilterIndex(this, conditions, this.#filterIndexes, "or");
     return this;
   }
   nor(...conditions) {
@@ -127,16 +159,16 @@ var query_default = class {
     const right = mergeConditions(conditions, "nor");
     this.#filter = (record) => !(left(record) || right(record));
     this.#insertFields = {};
+    this.#filterIndexes = null;
     return this;
   }
   async find() {
-    const records = await this.#table.getRecords();
-    let filtedRecords = records.filter(this.#filter);
-    if (this.#sorter)
-      filtedRecords.sort(this.#sorter);
-    if (this.#skip > 0 || this.#limit > 0) {
-      filtedRecords = filtedRecords.slice(this.#skip, this.#skip + this.#limit);
-    }
+    let filtedRecords = await this.#table.getRecords({
+      filter: this.#filter,
+      sorter: this.#sorter,
+      skip: this.#skip,
+      limit: this.#limit
+    });
     if (this.#projection) {
       const { type, fields } = this.#projection;
       if (type === "inclusion") {
@@ -158,11 +190,13 @@ var query_default = class {
     return filtedRecords;
   }
   async findOne() {
-    if (this.#sorter || this.#skip > 0 || this.#limit > 0) {
-      return (await this.find())[0] || null;
-    }
-    const records = await this.#table.getRecords();
-    const record = records.find(this.#filter) || null;
+    const records = await this.#table.getRecords({
+      filter: this.#filter,
+      sorter: this.#sorter,
+      skip: 0,
+      limit: 1
+    });
+    const record = records[0];
     if (this.#projection) {
       const { type, fields } = this.#projection;
       const ret = {};
@@ -291,195 +325,163 @@ var query_default = class {
   get table() {
     return this.#table;
   }
+  get filterIndexes() {
+    const filterIndexes = this.#filterIndexes || {};
+    if (Object.keys(filterIndexes).length)
+      return filterIndexes;
+    return null;
+  }
 };
 
+// node_modules/uuid/dist/esm-browser/rng.js
+var getRandomValues;
+var rnds8 = new Uint8Array(16);
+function rng() {
+  if (!getRandomValues) {
+    getRandomValues = typeof crypto !== "undefined" && crypto.getRandomValues && crypto.getRandomValues.bind(crypto);
+    if (!getRandomValues) {
+      throw new Error("crypto.getRandomValues() not supported. See https://github.com/uuidjs/uuid#getrandomvalues-not-supported");
+    }
+  }
+  return getRandomValues(rnds8);
+}
+
+// node_modules/uuid/dist/esm-browser/stringify.js
+var byteToHex = [];
+for (let i = 0; i < 256; ++i) {
+  byteToHex.push((i + 256).toString(16).slice(1));
+}
+function unsafeStringify(arr, offset = 0) {
+  return (byteToHex[arr[offset + 0]] + byteToHex[arr[offset + 1]] + byteToHex[arr[offset + 2]] + byteToHex[arr[offset + 3]] + "-" + byteToHex[arr[offset + 4]] + byteToHex[arr[offset + 5]] + "-" + byteToHex[arr[offset + 6]] + byteToHex[arr[offset + 7]] + "-" + byteToHex[arr[offset + 8]] + byteToHex[arr[offset + 9]] + "-" + byteToHex[arr[offset + 10]] + byteToHex[arr[offset + 11]] + byteToHex[arr[offset + 12]] + byteToHex[arr[offset + 13]] + byteToHex[arr[offset + 14]] + byteToHex[arr[offset + 15]]).toLowerCase();
+}
+
+// node_modules/uuid/dist/esm-browser/native.js
+var randomUUID = typeof crypto !== "undefined" && crypto.randomUUID && crypto.randomUUID.bind(crypto);
+var native_default = {
+  randomUUID
+};
+
+// node_modules/uuid/dist/esm-browser/v4.js
+function v4(options, buf, offset) {
+  if (native_default.randomUUID && !buf && !options) {
+    return native_default.randomUUID();
+  }
+  options = options || {};
+  const rnds = options.random || (options.rng || rng)();
+  rnds[6] = rnds[6] & 15 | 64;
+  rnds[8] = rnds[8] & 63 | 128;
+  if (buf) {
+    offset = offset || 0;
+    for (let i = 0; i < 16; ++i) {
+      buf[offset + i] = rnds[i];
+    }
+    return buf;
+  }
+  return unsafeStringify(rnds);
+}
+var v4_default = v4;
+
 // lib/table.js
-RegExp.prototype.toJSON = function() {
-  return { type: "RegExp", source: this.source, flags: this.flags };
-};
-function toJSON() {
-  const _schema = this.records.map((d) => {
-    const s = {};
-    for (const [k, v] of Object.entries(d)) {
-      s[k] = getType(v);
-    }
-    return s;
-  });
-  return {
-    _ids: this._ids,
-    records: this.records,
-    _schema
+var Table = (async () => {
+  let platform;
+  if (true) {
+    platform = await Promise.resolve().then(() => (init_browser(), browser_exports));
+  } else {
+    platform = await null;
+  }
+  const { fileSync: fileSync2, getRecords: getRecords2, flushData: flushData2, createTable: createTable2 } = platform;
+  RegExp.prototype.toJSON = function() {
+    return { type: "RegExp", source: this.source, flags: this.flags };
   };
-}
-async function getRecordsFromFile(filepath) {
-  await _fileLock(filepath);
-  let records = await (0, import_promises.readFile)(filepath, { charset: "utf8" });
-  await _fileUnlock(filepath);
-  records = JSON.parse(records);
-  records.records = records.records.map((r, i) => {
-    const schema = records._schema[i];
-    for (const [k, v] of Object.entries(schema)) {
-      if (v === "date") {
-        r[k] = new Date(r[k]);
-      } else if (v === "regexp") {
-        r[k] = new RegExp(r[k].source, r[k].flags);
+  return class {
+    #name;
+    #db;
+    #ready;
+    #indexes;
+    constructor(name, { root = ".db", meta = ".meta", database, indexes } = {}) {
+      if (name.startsWith(".")) {
+        throw new TypeError("The table name cannot starts with '.'.");
       }
-    }
-    return r;
-  });
-  delete records._schema;
-  records.toJSON = toJSON;
-  return records;
-}
-function _insert(records, ids, table) {
-  const start = table.records.length;
-  for (let i = 0; i < ids.length; i++) {
-    const id = ids[i];
-    table._ids[id] = start + i;
-  }
-  table.records = [...table.records, ...records];
-}
-async function _fileLock(filepath, unlock = false) {
-  const locker = `${filepath}.lck`;
-  while ((0, import_node_fs.existsSync)(locker)) {
-    await sleep(10);
-  }
-  if (!unlock)
-    (0, import_node_fs.writeFileSync)(locker, "");
-}
-async function _fileUnlock(filepath) {
-  const locker = `${filepath}.lck`;
-  await (0, import_promises.unlink)(locker);
-}
-async function _updateMeta(metafile, version) {
-  await _fileLock(metafile);
-  const metadata = JSON.parse(await (0, import_promises.readFile)(metafile, { charset: "utf8" }));
-  metadata.version = version;
-  await (0, import_promises.writeFile)(metafile, JSON.stringify(metadata), { charset: "utf8" });
-  await _fileUnlock(metafile);
-}
-var table_default = class {
-  #name;
-  #root;
-  #records;
-  #meta;
-  #version;
-  constructor(name, { root = ".db", meta = ".meta" } = {}) {
-    if (name.startsWith(".")) {
-      throw new TypeError("The table name cannot starts with '.'.");
-    }
-    this.#name = name;
-    this.#root = root;
-    this.#meta = meta;
-    if (!(0, import_node_fs.existsSync)(this.#root)) {
-      (0, import_node_fs.mkdirSync)(this.#root);
-    }
-    if (!(0, import_node_fs.existsSync)(this.#meta)) {
-      (0, import_node_fs.mkdirSync)(this.#meta);
-    }
-    if (!(0, import_node_fs.existsSync)(this.metapath)) {
-      this.#version = generateID();
-      (0, import_node_fs.writeFileSync)(this.metapath, JSON.stringify({ version: this.#version }), { charset: "utf8" });
-    } else {
-      const { version } = JSON.parse((0, import_node_fs.readFileSync)(this.metapath, { charset: "utf8" }));
-      this.#version = version;
-    }
-    if (!(0, import_node_fs.existsSync)(this.filepath)) {
-      const records = {
-        _ids: {},
-        records: [],
-        toJSON
+      this.#name = name;
+      this.#db = database;
+      this.#indexes = {
+        _id: true,
+        // indent
+        ...indexes
       };
-      (0, import_node_fs.writeFileSync)(this.filepath, JSON.stringify(records), { charset: "utf8" });
-      this.#records = records;
+      this.#ready = createTable2(this, root, meta).then((res) => {
+        this._storage = res;
+      });
     }
-  }
-  async getRecords() {
-    await _fileLock(this.metapath);
-    const { version } = JSON.parse(await (0, import_promises.readFile)(this.metapath, { charset: "utf8" }));
-    if (!this.#records || this.#version !== version) {
-      this.#records = await getRecordsFromFile(this.filepath);
+    get indexes() {
+      return this.#indexes;
     }
-    this.#version = version;
-    await _fileUnlock(this.metapath);
-    return this.#records.records.slice(0);
-  }
-  get name() {
-    return this.#name;
-  }
-  get metapath() {
-    return import_node_path.default.join(this.#meta, `${this.name}.meta`);
-  }
-  get filepath() {
-    return import_node_path.default.join(this.#root, this.name);
-  }
-  async save(records = [], countResult = false) {
-    const originalRecords = records;
-    if (!Array.isArray(records)) {
-      records = [records];
+    get database() {
+      return this.#db;
     }
-    await this.getRecords();
-    const insertRecords = [];
-    const insertIds = [];
-    const datetime = /* @__PURE__ */ new Date();
-    for (let i = 0; i < records.length; i++) {
-      const record = records[i];
-      record.createdAt = record.createdAt || datetime;
-      record.updatedAt = datetime;
-      if (record._id != null) {
-        const idx = this.#records._ids[record._id];
-        if (idx >= 0) {
-          this.#records.records[idx] = record;
-        }
-      } else {
-        record._id = record._id || generateID();
-        insertRecords.push(record);
-        insertIds.push(record._id);
+    get name() {
+      return this.#name;
+    }
+    async getRecords({ filter, sorter, skip, limit } = {}) {
+      await this.#ready;
+      return getRecords2(this, { filter, sorter, skip, limit });
+    }
+    async save(records = [], countResult = false) {
+      await this.#ready;
+      const originalRecords = records;
+      if (!Array.isArray(records)) {
+        records = [records];
       }
+      await flushData2(this);
+      const insertRecords = [];
+      const datetime = /* @__PURE__ */ new Date();
+      for (let i = 0; i < records.length; i++) {
+        const record = records[i];
+        record.createdAt = record.createdAt || datetime;
+        record.updatedAt = datetime;
+        if (record._id != null) {
+          const idx = this._storage.getItemIndex(record._id);
+          if (idx >= 0) {
+            await this._storage.put(idx, record);
+          }
+        } else {
+          record._id = record._id || v4_default();
+          insertRecords.push(record);
+        }
+      }
+      const upsertedCount = insertRecords.length;
+      const modifiedCount = records.length - upsertedCount;
+      await this._storage.add(insertRecords);
+      await fileSync2(this);
+      if (countResult)
+        return { modifiedCount, upsertedCount };
+      return originalRecords;
     }
-    const upsertedCount = insertRecords.length;
-    const modifiedCount = records.length - upsertedCount;
-    _insert(insertRecords, insertIds, this.#records);
-    this.#fileSync();
-    if (countResult)
-      return { modifiedCount, upsertedCount };
-    return originalRecords;
-  }
-  async #fileSync() {
-    await _fileLock(this.filepath);
-    await (0, import_promises.writeFile)(this.filepath, JSON.stringify(this.#records), { charset: "utf8" });
-    const version = generateID();
-    await _updateMeta(this.metapath, version);
-    this.#version = version;
-    await _fileUnlock(this.filepath);
-  }
-  async delete(records = []) {
-    if (!Array.isArray(records))
-      records = [records];
-    await this.getRecords();
-    let deletedCount = 0;
-    const filterMap = {};
-    for (let i = 0; i < records.length; i++) {
-      const record = records[i];
-      const idx = this.#records._ids[record._id];
-      if (idx >= 0)
-        deletedCount++;
-      filterMap[idx] = true;
+    async delete(records = []) {
+      await this.#ready;
+      if (!Array.isArray(records))
+        records = [records];
+      await flushData2(this);
+      let deletedCount = 0;
+      const filterMap = {};
+      for (let i = 0; i < records.length; i++) {
+        const record = records[i];
+        const idx = this._storage.getItemIndex(record._id);
+        if (idx >= 0)
+          deletedCount++;
+        filterMap[idx] = true;
+      }
+      await this._storage.delete(filterMap);
+      await fileSync2(this);
+      return { deletedCount };
     }
-    this.#records.records = this.#records.records.filter((_, idx) => !filterMap[idx]);
-    this.#records._ids = {};
-    for (let i = 0; i < this.#records.records.length; i++) {
-      const record = this.#records.records[i];
-      this.#records._ids[record._id] = i;
+    where(condition = {}) {
+      const query = new query_default(condition, this);
+      return query;
     }
-    this.#fileSync();
-    return { deletedCount };
-  }
-  where(conditions) {
-    const query = new query_default(conditions, this);
-    return query;
-  }
-};
+  };
+})();
+var table_default = Table;
 
 // lib/operator.js
 var operator_default = class {
@@ -667,18 +669,27 @@ var operator_default = class {
 var db_default = class extends operator_default {
   #root;
   #meta;
+  #name;
   #tables = {};
-  constructor({ root = ".db", meta = ".meta" } = {}) {
+  constructor({ root = ".db", meta = ".meta", name = "airdb" } = {}) {
     super();
     this.#root = root;
     this.#meta = meta;
+    this.#name = name;
+  }
+  get name() {
+    return this.#name;
   }
   table(name) {
     if (!this.#tables[name])
-      this.#tables[name] = new table_default(name, { root: this.#root, meta: this.#meta });
+      this.#tables[name] = new table_default(name, { root: this.#root, meta: this.#meta, database: this });
     return this.#tables[name];
   }
 };
 
 // index.js
 var airdb_lite_default = db_default;
+export {
+  db_default as AirDB,
+  airdb_lite_default as default
+};

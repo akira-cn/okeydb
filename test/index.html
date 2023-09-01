@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Document</title>
+</head>
+<body>
+  <script type="module">
+    import { AirDB } from './dist/airdb.browser.mjs';
+
+    function* pollItem(array) {
+      let current = 0;
+      while(true) {
+        yield array[current++ % array.length];
+      }
+    }
+
+    const db = new AirDB();
+    const table = db.table('employees');
+
+    await table.where().delete();
+    const genTeam = pollItem(['juejin', 'segmentfault', 'aircode']);
+    const genPosition = pollItem(['developer', 'designer', 'manager', 'intern']);
+
+    const employees = [];
+    for(let i = 0; i < 10; i++) {
+      employees.push({
+        id: i,
+        team: genTeam.next().value, 
+        position: genPosition.next().value,
+        age: 20 + i * 2,
+        avaliablePositions: ['developer', 'designer', 'manager', 'intern'],
+      });
+    }
+    await table.save(employees);
+
+    console.table(await table.where({team: 'juejin'}).find());
+
+    // const db = new AirDB();
+    // const table = db.table('person', {indexes: {score: false}});
+    // console.log(table);
+
+    // const table2 = db.table('person2');
+    // console.log(table2);
+    // await table2.save({x: 1});
+
+    // for(let i = 0; i < 10; i++) {
+    //   const data = {
+    //     name: `student${i}`,
+    //     score: random(50, 100),
+    //   };
+    //   await table.save(data);
+    // }
+
+    // const students = await table.where()
+    //   .sort({createdAt: 'desc'})
+    //   .limit(5)
+    //   .find();
+    // console.log(students);
+
+    // const res = await table.where({_id: students[0]._id})
+    //   .or({_id: students[1]._id}, {name: 'student4'}, {score: db.gt(80).lt(90)})
+    //   .skip(1)
+    //   .find();
+    // console.log(res);
+
+    // const res2 = await table.where({score: db.gt(70).lt(90), name: /^student[1-6]/})
+    //   // .skip(1)
+    //   // .limit(3)
+    //   // .sort({score: 'desc'})
+    //   .sort({score: 'desc'})
+    //   .find();
+    // console.log(res2);
+
+    // const res3 = await table.where({name: /^student[7-9]/})
+    //   // .skip(2)
+    //   // .limit(3)
+    //   .sort({score: 'desc'})
+    //   .find();
+    // console.log(res3);
+  </script>
+</body>
+</html>
