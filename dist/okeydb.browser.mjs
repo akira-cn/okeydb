@@ -453,14 +453,14 @@ var init_browser = __esm({
   "lib/platform/browser/index.js"() {
     init_storage();
     dbInstances = {};
-    _filter3 = Symbol.for("airdb-filter");
+    _filter3 = Symbol.for("okeydb-filter");
     _notIndexFilter2 = Symbol.for("not-index-filter");
     version = 0;
   }
 });
 
 // lib/utils.js
-var _filter = Symbol.for("airdb-filter");
+var _filter = Symbol.for("okeydb-filter");
 function parseCondition(condition = {}) {
   if (typeof condition === "function")
     return condition;
@@ -535,7 +535,7 @@ function updateFilterIndex(query, conditions, filterIndexes = {}, phase = "and")
   query.table[_notIndexFilter] = notIndexFilter;
   return filterIndexes;
 }
-var _filter2 = Symbol.for("airdb-filter");
+var _filter2 = Symbol.for("okeydb-filter");
 var query_default = class {
   #table;
   #filter;
@@ -948,7 +948,7 @@ var Table = (() => {
 var table_default = Table;
 
 // lib/operator.js
-var _filter4 = Symbol.for("airdb-filter");
+var _filter4 = Symbol.for("okeydb-filter");
 var Operator = class _Operator {
   constructor(filter, prev) {
     if (filter && prev) {
@@ -1207,7 +1207,7 @@ var db_default = class extends Operator {
   #name;
   #version;
   #tables = {};
-  constructor({ root = ".db", meta = ".meta", name = "airdb", version: version2 = 1 } = {}) {
+  constructor({ root = ".db", meta = ".meta", name = "okeydb", version: version2 = 1 } = {}) {
     super();
     this.#root = root;
     this.#meta = meta;
