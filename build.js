@@ -7,7 +7,7 @@ if(process.env.mode === 'production') {
     bundle: true,
     platform: 'node',
     format: 'cjs',
-    outfile: 'dist/airdb.cjs',
+    outfile: 'dist/okeydb.cjs',
     define: {
       'ESB_PLATFORM': '"node"',
     }
@@ -17,8 +17,8 @@ if(process.env.mode === 'production') {
     entryPoints: ['index.js'],
     bundle: true,
     platform: 'browser',
-    globalName: 'AirDB',
-    outfile: 'dist/airdb.browser.js',
+    globalName: 'OkeyDB',
+    outfile: 'dist/okeydb.browser.js',
     define: {
       'ESB_PLATFORM': '"browser"',
     }
@@ -29,7 +29,7 @@ if(process.env.mode === 'production') {
     bundle: true,
     platform: 'browser',
     format: 'esm',
-    outfile: 'dist/airdb.browser.mjs',
+    outfile: 'dist/okeydb.browser.mjs',
     define: {
       'ESB_PLATFORM': '"browser"',
     }
@@ -40,7 +40,7 @@ if(process.env.mode === 'production') {
     bundle: true,
     platform: 'browser',
     format: 'esm',
-    outfile: 'test/dist/airdb.browser.mjs',
+    outfile: 'test/dist/okeydb.browser.mjs',
     define: {
       'ESB_PLATFORM': '"browser"',
     }

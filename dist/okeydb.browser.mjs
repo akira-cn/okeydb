@@ -838,14 +838,13 @@ function v4(options, buf, offset) {
 var v4_default = v4;
 
 // lib/table.js
-var Table = await (async () => {
+var Table = (() => {
   let platform;
   if (true) {
-    platform = await Promise.resolve().then(() => (init_browser(), browser_exports));
+    platform = Promise.resolve().then(() => (init_browser(), browser_exports));
   } else {
-    platform = await null;
+    platform = null;
   }
-  const { fileSync: fileSync2, getRecords: getRecords2, flushData: flushData2, createTable: createTable2 } = platform;
   RegExp.prototype.toJSON = function() {
     return { type: "RegExp", source: this.source, flags: this.flags };
   };
@@ -867,7 +866,9 @@ var Table = await (async () => {
         updatedAt: false,
         ...indexes
       };
-      this.#ready = createTable2(this, root, meta).then((res) => {
+      this.#ready = platform.then(({ createTable: createTable2 }) => {
+        return createTable2(this, root, meta);
+      }).then((res) => {
         this._storage = res;
       });
     }
@@ -882,6 +883,7 @@ var Table = await (async () => {
     }
     async getRecords({ filter, sorter, skip, limit, filterIndexes, rawSorter } = {}) {
       await this.#ready;
+      const { getRecords: getRecords2 } = await platform;
       return getRecords2(this, { filter, sorter, skip, limit, filterIndexes, rawSorter });
     }
     async save(records = [], countResult = false) {
@@ -890,6 +892,7 @@ var Table = await (async () => {
       if (!Array.isArray(records)) {
         records = [records];
       }
+      const { flushData: flushData2 } = await platform;
       await flushData2(this);
       const insertRecords = [];
       const datetime = /* @__PURE__ */ new Date();
@@ -910,6 +913,7 @@ var Table = await (async () => {
       const upsertedCount = insertRecords.length;
       const modifiedCount = records.length - upsertedCount;
       await this._storage.add(insertRecords);
+      const { fileSync: fileSync2 } = await platform;
       await fileSync2(this);
       if (countResult)
         return { modifiedCount, upsertedCount };
@@ -919,6 +923,7 @@ var Table = await (async () => {
       await this.#ready;
       if (!Array.isArray(records))
         records = [records];
+      const { flushData: flushData2 } = await platform;
       await flushData2(this);
       let deletedCount = 0;
       const filterMap = {};
@@ -930,6 +935,7 @@ var Table = await (async () => {
         filterMap[idx] = true;
       }
       await this._storage.delete(filterMap);
+      const { fileSync: fileSync2 } = await platform;
       await fileSync2(this);
       return { deletedCount };
     }
@@ -1228,6 +1234,6 @@ var db_default = class extends Operator {
 // index.js
 var airdb_lite_default = db_default;
 export {
-  db_default as AirDB,
+  db_default as OkeyDB,
   airdb_lite_default as default
 };

@@ -1,6 +1,6 @@
-# AirDB
+# OkeyDB
 
-Airdb is a light-weight document oriented NoSQL database based on local file-system and [IndexedDB](https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API).
+OkeyDB is a light-weight document oriented NoSQL database based on local file-system and [IndexedDB](https://developer.mozilla.org/en-US/docs/Web/API/IndexedDB_API).
 
 Pure JavaScript NoSQL database with no dependency. IndexedDB, Flat file, JSON based document database, running in Web Browser and Node.js.
 
@@ -16,12 +16,58 @@ Pure JavaScript NoSQL database with no dependency. IndexedDB, Flat file, JSON ba
 
 ## Usage
 
-- Create tables and insert records.
+### In Web Browser
+
+```html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Document</title>
+</head>
+<body>
+  <script type="module">
+    import { OkeyDB } from 'https://unpkg.com/okeydb@0.1.0/dist/okeydb.browser.mjs';
+
+    function* pollItem(array) {
+      let current = 0;
+      while(true) {
+        yield array[current++ % array.length];
+      }
+    }
+
+    const db = new OkeyDB();
+    const table = db.table('employees');
+
+    await table.where().delete();
+    const genTeam = pollItem(['juejin', 'segmentfault', 'aircode']);
+    const genPosition = pollItem(['developer', 'designer', 'manager', 'intern']);
+
+    const employees = [];
+    for(let i = 0; i < 10; i++) {
+      employees.push({
+        id: i,
+        team: genTeam.next().value, 
+        position: genPosition.next().value,
+        age: 20 + i * 2,
+        avaliablePositions: ['developer', 'designer', 'manager', 'intern'],
+      });
+    }
+    await table.save(employees);
+
+    console.table(await table.where({team: 'juejin'}).find());
+  </script>
+</body>
+</html>
+```
+
+### In Node.js
 
 ```js
-import AirDB from 'airdb-lite';
+import OkeyDB from 'okeydb';
 
-const db = new AirDB();
+const db = new OkeyDB();
 const personTable = db.table('person');
 const students = [];
 
@@ -118,7 +164,7 @@ console.log(result);
 
 ## Limits
 
-You can use AirDB in your web app as client database. 
+You can use OkeyDB in your web app as client database. 
 
 - **But due to the following reasons, it is NOT recommended for use in a Node.js production environment:**
   - This is just a single-instance text database and does not have the ability to scale across multiple servers.

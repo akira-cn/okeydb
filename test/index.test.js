@@ -1,6 +1,6 @@
-import AirDB from '../index.js';
+import OkeyDB from '../index.js';
 
-const db = new AirDB();
+const db = new OkeyDB();
 const personTable = db.table('person');
 
 test('base set find delete', async () => {

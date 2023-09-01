@@ -1,8 +1,8 @@
-import AirDB from '../index.js';
+import OkeyDB from '../index.js';
 
 // import {sjs, attr} from 'slow-json-stringify';
 
-const db = new AirDB();
+const db = new OkeyDB();
 const personTable = db.table('bigtable');
 
 console.time('delete0');

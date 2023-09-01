@@ -1,17 +1,17 @@
 {
-  "name": "airdb",
+  "name": "okeydb",
   "version": "0.1.0",
   "description": "",
   "type": "module",
-  "main": "dist/airdb.cjs",
+  "main": "dist/okeydb.cjs",
   "module": "index.js",
-  "browser": "dist/airdb.browser.js",
+  "browser": "dist/okeydb.browser.js",
   "scripts": {
     "dev": "node build.js",
     "build": "mode=production node build.js",
     "prepublishOnly": "npm run build",
     "test": "cross-env NODE_OPTIONS=--experimental-vm-modules jest",
-    "test:browser": "npm run build && cp ./dist/airdb.browser.mjs ./test/dist/airdb.browser.mjs"
+    "test:browser": "npm run build && cp ./dist/okeydb.browser.mjs ./test/dist/okeydb.browser.mjs"
   },
   "keywords": [],
   "author": "",

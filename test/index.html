@@ -7,7 +7,7 @@
 </head>
 <body>
   <script type="module">
-    import { AirDB } from './dist/airdb.browser.mjs';
+    import { OkeyDB } from './dist/okeydb.browser.mjs';
 
     function* pollItem(array) {
       let current = 0;
@@ -16,7 +16,7 @@
       }
     }
 
-    const db = new AirDB();
+    const db = new OkeyDB();
     const table = db.table('employees');
 
     await table.where().delete();
@@ -37,7 +37,7 @@
 
     console.table(await table.where({team: 'juejin'}).find());
 
-    // const db = new AirDB();
+    // const db = new OkeyDB();
     // const table = db.table('person', {indexes: {score: false}});
     // console.log(table);
 

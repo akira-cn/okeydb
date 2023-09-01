@@ -1,4 +1,4 @@
-import AirDB from "./lib/db.js";
+import OkeyDB from "./lib/db.js";
 
-export { AirDB };
-export default AirDB;
+export { OkeyDB };
+export default OkeyDB;

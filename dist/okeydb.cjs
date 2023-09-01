@@ -33,12 +33,17 @@ var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: tru
 function parseCondition(condition = {}) {
   if (typeof condition === "function")
     return condition;
+  if (condition[_filter])
+    return condition[_filter];
   const filters = [];
   for (const [k, v] of Object.entries(condition)) {
     if (typeof v === "function") {
       filters.push((d) => v(d[k], k, d));
+    } else if (v && typeof v[_filter] === "function") {
+      const f = v[_filter];
+      filters.push((d) => f(d[k], k, d));
     } else if (v instanceof RegExp) {
-      filters.push((d) => d[k].match(v) != null);
+      filters.push((d) => d[k] && typeof d[k].match === "function" && d[k].match(v) != null);
     } else {
       filters.push((d) => d[k] === v);
     }
@@ -74,8 +79,10 @@ function getType(value) {
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+var _filter;
 var init_utils = __esm({
   "lib/utils.js"() {
+    _filter = Symbol.for("airdb-filter");
   }
 });
 
@@ -318,7 +325,7 @@ async function getRecords(table, { filter, sorter, skip, limit } = {}) {
   }
   if (sorter)
     filtedRecords.sort(sorter);
-  if (skip > 0 || limit > 0) {
+  if (skip > 0 || Number.isFinite(limit)) {
     filtedRecords = filtedRecords.slice(skip, skip + limit);
   }
   return filtedRecords;
@@ -340,15 +347,17 @@ var init_node = __esm({
 // index.js
 var airdb_lite_exports = {};
 __export(airdb_lite_exports, {
-  AirDB: () => db_default,
+  OkeyDB: () => db_default,
   default: () => airdb_lite_default
 });
 module.exports = __toCommonJS(airdb_lite_exports);
 
 // lib/query.js
 init_utils();
+var _notIndexFilter = Symbol.for("not-index-filter");
 function updateFilterIndex(query, conditions, filterIndexes = {}, phase = "and") {
   const indexes = query.table.indexes;
+  let notIndexFilter = false;
   for (let i = 0; i < conditions.length; i++) {
     const condition = conditions[i];
     let hasIndex = false;
@@ -356,41 +365,52 @@ function updateFilterIndex(query, conditions, filterIndexes = {}, phase = "and")
       if (k in indexes) {
         hasIndex = true;
         filterIndexes[k] = filterIndexes[k] || /* @__PURE__ */ new Set();
-        if (!(typeof v === "function"))
-          filterIndexes[k].add(v);
+        filterIndexes[k].add(v);
         if (phase === "and" && filterIndexes[k].size > 1)
           filterIndexes[k].clear();
+      } else {
+        notIndexFilter = true;
       }
     }
     if (!hasIndex && phase === "or") {
+      query.table[_notIndexFilter] = notIndexFilter;
       return null;
     }
   }
+  query.table[_notIndexFilter] = notIndexFilter;
   return filterIndexes;
 }
+var _filter2 = Symbol.for("airdb-filter");
 var query_default = class {
   #table;
   #filter;
   #records;
   #sorter = null;
+  #rawSorter;
   #skip = 0;
-  #limit = 0;
+  #limit = Infinity;
   #projection = null;
   #updateFields = null;
-  #insertFields = null;
+  #insertFields = {};
   #setOnInsertFields = null;
   #upsert = false;
   #filterIndexes = {};
   constructor(condition, table) {
-    this.#filter = mergeConditions([condition]);
     this.#table = table;
-    this.#insertFields = { ...condition };
-    this.#filterIndexes = updateFilterIndex(this, [condition], {}, "and");
+    if (condition) {
+      this.#filter = mergeConditions([condition]);
+      this.#insertFields = { ...condition };
+      this.#filterIndexes = updateFilterIndex(this, [condition], {}, "and");
+    }
   }
   and(...conditions) {
     const left = this.#filter;
     const right = mergeConditions(conditions);
-    this.#filter = (record) => left(record) && right(record);
+    if (left) {
+      this.#filter = (record) => left(record) && right(record);
+    } else {
+      this.#filter = right;
+    }
     for (let i = 0; i < conditions.length; i++) {
       Object.assign(this.#insertFields, conditions[i]);
     }
@@ -401,7 +421,11 @@ var query_default = class {
   or(...conditions) {
     const left = this.#filter;
     const right = mergeConditions(conditions, "or");
-    this.#filter = (record) => left(record) || right(record);
+    if (left) {
+      this.#filter = (record) => left(record) || right(record);
+    } else {
+      this.#filter = right;
+    }
     this.#insertFields = {};
     if (this.#filterIndexes)
       this.#filterIndexes = updateFilterIndex(this, conditions, this.#filterIndexes, "or");
@@ -409,18 +433,27 @@ var query_default = class {
   }
   nor(...conditions) {
     const left = this.#filter;
-    const right = mergeConditions(conditions, "nor");
-    this.#filter = (record) => !(left(record) || right(record));
+    const right = mergeConditions(conditions, "or");
+    if (left) {
+      this.#filter = (record) => !(left(record) || right(record));
+    } else {
+      this.#filter = (record) => !right(record);
+    }
     this.#insertFields = {};
     this.#filterIndexes = null;
+    this.table[_notIndexFilter] = true;
     return this;
   }
   async find() {
     let filtedRecords = await this.#table.getRecords({
-      filter: this.#filter,
+      filter: this.#filter || function() {
+        return true;
+      },
       sorter: this.#sorter,
+      rawSorter: this.#rawSorter,
       skip: this.#skip,
-      limit: this.#limit
+      limit: this.#limit,
+      filterIndexes: this.filterIndexes
     });
     if (this.#projection) {
       const { type, fields } = this.#projection;
@@ -444,10 +477,14 @@ var query_default = class {
   }
   async findOne() {
     const records = await this.#table.getRecords({
-      filter: this.#filter,
+      filter: this.#filter || function() {
+        return true;
+      },
       sorter: this.#sorter,
-      skip: 0,
-      limit: 1
+      rawSorter: this.#rawSorter,
+      skip: this.#skip,
+      limit: 1,
+      filterIndexes: this.filterIndexes
     });
     const record = records[0];
     if (this.#projection) {
@@ -487,13 +524,20 @@ var query_default = class {
         records = await this.find();
       if (records.length <= 0 && this.#upsert) {
         records = Object.assign({}, this.#insertFields, this.#setOnInsertFields);
-        for (const [k, v] of Object.entries(records)) {
-          if (typeof v === "function")
-            delete records[k];
+        for (let [k, v] of Object.entries(records)) {
+          if (v && typeof v[_filter2] === "function") {
+            v = v[_filter2];
+          }
+          if (typeof v === "function") {
+            records[k] = v(records[k], k, records);
+          }
         }
         if (this.#updateFields) {
           const updateFields = this.#updateFields;
-          for (const [k, v] of Object.entries(updateFields)) {
+          for (let [k, v] of Object.entries(updateFields)) {
+            if (v && typeof v[_filter2] === "function") {
+              v = v[_filter2];
+            }
             if (typeof v !== "function") {
               records[k] = v;
             } else {
@@ -507,7 +551,10 @@ var query_default = class {
         const updateFields = this.#updateFields;
         records = records.map((record) => {
           const ret = { ...record };
-          for (const [k, v] of Object.entries(updateFields)) {
+          for (let [k, v] of Object.entries(updateFields)) {
+            if (v && typeof v[_filter2] === "function") {
+              v = v[_filter2];
+            }
             if (typeof v !== "function") {
               ret[k] = v;
             } else {
@@ -533,6 +580,7 @@ var query_default = class {
   }
   sort(conditions) {
     const conds = Object.entries(conditions);
+    this.#rawSorter = conditions;
     this.#sorter = (a, b) => {
       for (let [k, v] of conds) {
         if (typeof v === "string") {
@@ -588,14 +636,13 @@ var query_default = class {
 
 // lib/table.js
 init_esm_node();
-var Table = (async () => {
+var Table = (() => {
   let platform;
   if (false) {
-    platform = await null;
+    platform = null;
   } else {
-    platform = await Promise.resolve().then(() => (init_node(), node_exports));
+    platform = Promise.resolve().then(() => (init_node(), node_exports));
   }
-  const { fileSync: fileSync2, getRecords: getRecords2, flushData: flushData2, createTable: createTable2 } = platform;
   RegExp.prototype.toJSON = function() {
     return { type: "RegExp", source: this.source, flags: this.flags };
   };
@@ -613,9 +660,13 @@ var Table = (async () => {
       this.#indexes = {
         _id: true,
         // indent
+        createdAt: false,
+        updatedAt: false,
         ...indexes
       };
-      this.#ready = createTable2(this, root, meta).then((res) => {
+      this.#ready = platform.then(({ createTable: createTable2 }) => {
+        return createTable2(this, root, meta);
+      }).then((res) => {
         this._storage = res;
       });
     }
@@ -628,9 +679,10 @@ var Table = (async () => {
     get name() {
       return this.#name;
     }
-    async getRecords({ filter, sorter, skip, limit } = {}) {
+    async getRecords({ filter, sorter, skip, limit, filterIndexes, rawSorter } = {}) {
       await this.#ready;
-      return getRecords2(this, { filter, sorter, skip, limit });
+      const { getRecords: getRecords2 } = await platform;
+      return getRecords2(this, { filter, sorter, skip, limit, filterIndexes, rawSorter });
     }
     async save(records = [], countResult = false) {
       await this.#ready;
@@ -638,6 +690,7 @@ var Table = (async () => {
       if (!Array.isArray(records)) {
         records = [records];
       }
+      const { flushData: flushData2 } = await platform;
       await flushData2(this);
       const insertRecords = [];
       const datetime = /* @__PURE__ */ new Date();
@@ -658,6 +711,7 @@ var Table = (async () => {
       const upsertedCount = insertRecords.length;
       const modifiedCount = records.length - upsertedCount;
       await this._storage.add(insertRecords);
+      const { fileSync: fileSync2 } = await platform;
       await fileSync2(this);
       if (countResult)
         return { modifiedCount, upsertedCount };
@@ -667,6 +721,7 @@ var Table = (async () => {
       await this.#ready;
       if (!Array.isArray(records))
         records = [records];
+      const { flushData: flushData2 } = await platform;
       await flushData2(this);
       let deletedCount = 0;
       const filterMap = {};
@@ -678,10 +733,11 @@ var Table = (async () => {
         filterMap[idx] = true;
       }
       await this._storage.delete(filterMap);
+      const { fileSync: fileSync2 } = await platform;
       await fileSync2(this);
       return { deletedCount };
     }
-    where(condition = {}) {
+    where(condition = null) {
       const query = new query_default(condition, this);
       return query;
     }
@@ -691,205 +747,285 @@ var table_default = Table;
 
 // lib/operator.js
 init_utils();
-var operator_default = class {
+var _filter3 = Symbol.for("airdb-filter");
+var Operator = class _Operator {
+  constructor(filter, prev) {
+    if (filter && prev) {
+      this[_filter3] = this.and(prev, filter)[_filter3];
+    } else if (filter) {
+      this[_filter3] = filter;
+    }
+  }
   gt(value) {
-    return (d) => d > value;
+    const fn = (d) => d > value;
+    const ret = new _Operator(fn, this[_filter3]);
+    if (!this[_filter3]) {
+      ret._type = "gt";
+      ret._value = value;
+    } else if (this._type === "lt" || this._type === "lte") {
+      ret._type = `gt${this._type}`;
+      ret._value = [value, this._value];
+    }
+    return ret;
   }
   greaterThan(value) {
-    return (d) => d > value;
+    return this.gt(value);
   }
   gte(value) {
-    return (d) => d >= value;
+    const fn = (d) => d >= value;
+    const ret = new _Operator(fn, this[_filter3]);
+    if (!this[_filter3]) {
+      ret._type = "gte";
+      ret._value = value;
+    } else if (this._type === "lt" || this._type === "lte") {
+      ret._type = `gte${this._type}`;
+      ret._value = [value, this._value];
+    }
+    return ret;
   }
   greaterThanOrEqual(value) {
-    return (d) => d >= value;
+    return this.gte(value);
   }
   lt(value) {
-    return (d) => d < value;
+    const fn = (d) => d < value;
+    const ret = new _Operator(fn, this[_filter3]);
+    if (!this[_filter3]) {
+      ret._type = "lt";
+      ret._value = value;
+    } else if (this._type === "gt" || this._type === "gte") {
+      ret._type = `${this._type}lt`;
+      ret._value = [this._value, value];
+    }
+    return ret;
   }
   lessThan(value) {
-    return (d) => d < value;
+    return this.lt(value);
   }
   lte(value) {
-    return (d) => d <= value;
+    const fn = (d) => d <= value;
+    const ret = new _Operator(fn, this[_filter3]);
+    if (!this[_filter3]) {
+      ret._type = "lte";
+      ret._value = value;
+    } else if (this._type === "gt" || this._type === "gte") {
+      ret._type = `${this._type}lte`;
+      ret._value = [this._value, value];
+    }
+    return ret;
   }
   lessThanOrEqual(value) {
-    return (d) => d <= value;
+    return this.lte(value);
   }
   eq(value) {
-    return (d) => d == value;
+    return new _Operator((d) => d == value, this[_filter3]);
   }
   equal(value) {
-    return (d) => d == value;
+    return new _Operator((d) => d == value, this[_filter3]);
   }
   ne(value) {
-    return (d) => d != value;
+    return new _Operator((d) => d != value, this[_filter3]);
   }
   notEqual(value) {
-    return (d) => d != value;
+    return new _Operator((d) => d != value, this[_filter3]);
   }
   mod(divisor, remainder) {
-    return (d) => d % divisor === remainder;
+    return new _Operator((d) => d % divisor === remainder, this[_filter3]);
   }
   in(list) {
-    return (d) => {
+    return new _Operator((d) => {
       if (Array.isArray(d)) {
         return d.some((item) => list.includes(item));
       }
       return list.includes(d);
-    };
+    }, this[_filter3]);
   }
   nin(list) {
-    return (d) => {
+    return new _Operator((d) => {
       if (Array.isArray(d)) {
         return !d.some((item) => list.includes(item));
       }
       return !list.includes(d);
-    };
+    }, this[_filter3]);
   }
   all(list) {
-    return (d) => {
+    return new _Operator((d) => {
       if (Array.isArray(d)) {
         return d.every((item) => list.includes(item));
       }
-    };
+    }, this[_filter3]);
   }
   size(len) {
-    return (d) => {
+    return new _Operator((d) => {
       if (Array.isArray(d)) {
         return d.length === len;
       }
-    };
+    }, this[_filter3]);
   }
   bitsAllClear(positions) {
-    return (d) => {
+    return new _Operator((d) => {
       if (typeof d === "number") {
-        const mask = 0;
-        positions.forEach((p) => mask | 1 << p);
-        return d & mask === 0;
+        let mask = 0;
+        positions.forEach((p) => mask |= 1 << p);
+        return (d & mask) === 0;
       }
-    };
+    }, this[_filter3]);
   }
   bitsAnyClear(positions) {
-    return (d) => {
+    return new _Operator((d) => {
       if (typeof d === "number") {
-        const mask = 0;
-        positions.forEach((p) => mask | 1 << p);
-        return d & mask < mask;
+        let mask = 0;
+        positions.forEach((p) => mask |= 1 << p);
+        return (d & mask) < mask;
       }
-    };
+    }, this[_filter3]);
   }
   bitsAllSet(positions) {
-    return (d) => {
+    return new _Operator((d) => {
       if (typeof d === "number") {
-        const mask = 0;
-        positions.forEach((p) => mask | 1 << p);
-        return d & mask === mask;
+        let mask = 0;
+        positions.forEach((p) => mask |= 1 << p);
+        return (d & mask) === mask;
       }
-    };
+    }, this[_filter3]);
   }
   bitsAnySet(positions) {
-    return (d) => {
+    return new _Operator((d) => {
       if (typeof d === "number") {
-        const mask = 0;
-        positions.forEach((p) => mask | 1 << p);
-        return d & mask > 0;
+        let mask = 0;
+        positions.forEach((p) => mask |= 1 << p);
+        return (d & mask) > 0;
       }
-    };
+    }, this[_filter3]);
   }
   elemMatch(conditions) {
+    if (conditions instanceof _Operator) {
+      conditions = conditions[_filter3];
+    }
     const filter = typeof conditions === "function" ? conditions : mergeConditions(conditions);
-    return (d) => {
+    return new _Operator((d) => {
       if (Array.isArray(d)) {
         return d.some((item) => filter(item));
       }
-    };
+    }, this[_filter3]);
   }
   exists(flag) {
-    return (d, k, o) => k in o == flag;
+    return new _Operator((d, k, o) => k in o == flag, this[_filter3]);
   }
   type(t) {
-    return (d, k, o) => k in o && getType(d) === t;
+    return new _Operator((d, k, o) => k in o && getType(d) === t, this[_filter3]);
   }
   not(condition) {
-    return (d) => !condition(d);
+    if (condition instanceof _Operator) {
+      condition = condition[_filter3];
+    } else if (typeof condition !== "function") {
+      condition = (d) => d === condition;
+    }
+    return new _Operator((d, k, o) => !condition(d, k, o), this[_filter3]);
   }
-  and(conditions) {
-    return mergeConditions(conditions, "and");
+  and(...conditions) {
+    return new _Operator(mergeConditions(conditions, "and"), this[_filter3]);
   }
-  or(conditions) {
-    return mergeConditions(conditions, "or");
+  or(...conditions) {
+    return new _Operator(mergeConditions(conditions, "or"), this[_filter3]);
   }
-  nor(conditions) {
-    return mergeConditions(conditions, "nor");
+  nor(...conditions) {
+    return new _Operator(mergeConditions(conditions, "nor"), this[_filter3]);
   }
   inc(value) {
-    return (d) => {
+    const filter = this[_filter3];
+    return new _Operator((d) => {
+      if (filter)
+        d = filter(d);
       if (typeof d !== "number") {
         throw new Error("Cannot apply $inc to a value of non-numeric type.");
       }
       return d + value;
-    };
+    });
   }
   mul(value) {
-    return (d) => {
+    const filter = this[_filter3];
+    return new _Operator((d) => {
+      if (filter)
+        d = filter(d);
       if (typeof d !== "number") {
         throw new Error("Cannot apply $inc to a value of non-numeric type.");
       }
       return d * value;
-    };
+    });
   }
   min(value) {
-    return (d) => {
+    const filter = this[_filter3];
+    return new _Operator((d) => {
+      if (filter)
+        d = filter(d);
       if (typeof d !== "number") {
         throw new Error("Cannot apply $inc to a value of non-numeric type.");
       }
       return Math.min(d, value);
-    };
+    });
   }
   max(value) {
-    return (d) => {
+    const filter = this[_filter3];
+    return new _Operator((d) => {
+      if (filter)
+        d = filter(d);
       if (typeof d !== "number") {
         throw new Error("Cannot apply $inc to a value of non-numeric type.");
       }
       return Math.max(d, value);
-    };
+    });
   }
   rename(newKey) {
-    return (d, k, o) => {
+    return new _Operator((d, k, o) => {
       if (newKey !== k) {
         o[newKey] = o[k];
       }
-    };
+      return;
+    });
   }
   unset() {
-    return () => {
+    return new _Operator(() => {
       return;
-    };
+    });
   }
   currentDate() {
-    return () => /* @__PURE__ */ new Date();
+    return new _Operator(() => /* @__PURE__ */ new Date());
+  }
+  regex(value) {
+    return new _Operator((d) => {
+      const exp = new RegExp(value);
+      return d.match(exp) != null;
+    });
   }
 };
 
 // lib/db.js
-var db_default = class extends operator_default {
+var db_default = class extends Operator {
   #root;
   #meta;
   #name;
+  #version;
   #tables = {};
-  constructor({ root = ".db", meta = ".meta", name = "airdb" } = {}) {
+  constructor({ root = ".db", meta = ".meta", name = "airdb", version = 1 } = {}) {
     super();
     this.#root = root;
     this.#meta = meta;
     this.#name = name;
+    this.#version = version;
   }
   get name() {
     return this.#name;
   }
-  table(name) {
+  get version() {
+    return this.#version;
+  }
+  close() {
+    if (this.instance)
+      this.instance.close();
+  }
+  table(name, { indexes } = {}) {
     if (!this.#tables[name])
-      this.#tables[name] = new table_default(name, { root: this.#root, meta: this.#meta, database: this });
+      this.#tables[name] = new table_default(name, { root: this.#root, meta: this.#meta, database: this, indexes });
     return this.#tables[name];
   }
 };
@@ -898,5 +1034,5 @@ var db_default = class extends operator_default {
 var airdb_lite_default = db_default;
 // Annotate the CommonJS export names for ESM import in node:
 0 && (module.exports = {
-  AirDB
+  OkeyDB
 });
