@@ -616,7 +616,6 @@ var query_default = class {
         filtedRecords = filtedRecords.map((r) => {
           const ret = {};
           fields.forEach((f) => ret[f] = r[f]);
-          ret._id = r._id;
           return ret;
         });
       } else if (type === "exclusion") {
@@ -766,16 +765,27 @@ var query_default = class {
   projection(conditions) {
     let type = null;
     const fields = [];
+    let ignoreId = false;
     for (const [k, v] of Object.entries(conditions)) {
-      if (!type && v === 1)
+      if (k === "_id") {
+        ignoreId = !v;
+        continue;
+      }
+      if (!type && v)
         type = "inclusion";
-      else if (!type && v === 0)
+      else if (!type && !v)
         type = "exclusion";
-      else if (type === "inclusion" && v === 0 || type === "exclusion" && v === 1)
+      else if (type === "inclusion" && !v || type === "exclusion" && v)
         throw new Error("Projection cannot have a mix of inclusion and exclusion.");
       fields.push(k);
     }
-    this.#projection = { type, fields };
+    if (type === "exclusion" && ignoreId || type === "inclusion" && !ignoreId) {
+      fields.push("_id");
+    }
+    if (type === "exclusion" && !ignoreId) {
+      throw new Error("Projection cannot have a mix of inclusion and exclusion.");
+    }
+    this.#projection = { type: type || "inclusion", fields };
     return this;
   }
   get table() {
